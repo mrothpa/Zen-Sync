@@ -1,0 +1,5 @@
+{
+  "name": "The Mind Clone",
+  "description": "A minimalist, zen-like multiplayer implementation of The Mind card game using React, Tailwind CSS, and Firebase.",
+  "requestFramePermissions": []
+}

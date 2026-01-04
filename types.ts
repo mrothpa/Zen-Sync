@@ -1,0 +1,46 @@
+export interface Player {
+  uid: string;
+  name: string;
+  hand: number[];
+  isHost: boolean;
+  ready: boolean;
+}
+
+export type GameStatus = 'lobby' | 'playing' | 'level_complete' | 'game_over' | 'victory';
+
+export type GameEventType = 'play' | 'mistake' | 'level_complete' | 'game_over' | 'victory' | 'star_used';
+
+export interface GameEvent {
+  type: GameEventType;
+  message: string;
+  timestamp: number;
+  data?: any; // For flexible payload (e.g. lost cards)
+}
+
+export interface StarVote {
+  requesterUid: string;
+  requesterName: string;
+  approvedBy: string[]; // List of UIDs who voted YES
+  createdAt: number;
+}
+
+export interface GameState {
+  id: string;
+  status: GameStatus;
+  level: number;
+  lives: number;
+  stars: number; // Ninja Stars count
+  starVote?: StarVote | null; // Active voting session
+  starBlocked?: boolean; // Cooldown flag after rejected vote
+  lastPlayedCard: number;
+  playedCardsHistory: number[];
+  players: Player[];
+  createdAt: number;
+  lastEvent?: GameEvent;
+}
+
+export interface UserProfile {
+  uid: string;
+  displayName: string | null;
+  isAnonymous: boolean;
+}
