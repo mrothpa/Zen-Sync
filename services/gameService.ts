@@ -401,12 +401,17 @@ const executeStarEffect = async (transaction: any, roomRef: any, gameState: Game
   }
 
   // E. Commit
+  const sortedRemoved = cardsRemoved.sort((a, b) => a - b);
+  const newPlayedCardsHistory = [...(gameState.playedCardsHistory || []), ...sortedRemoved];
+  
   transaction.update(roomRef, {
     stars: Math.max(0, gameState.stars - 1),
     starVote: null, // Clear vote
     players: updatedPlayers,
     status: newStatus,
-    lastEvent: newLastEvent
+    lastEvent: newLastEvent,
+    lastPlayedCard: threshold,
+    playedCardsHistory: newPlayedCardsHistory
   });
 };
 
