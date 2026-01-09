@@ -257,11 +257,15 @@ export const playCard = async (roomId: string, playerUid: string, card: number) 
          newLastEvent = { type: 'play', message: `Played ${card}`, timestamp };
       }
 
+      // Add dropped cards to history so they are "played" before the high card
+      const sortedDropped = [...lowerCardsFound].sort((a, b) => a - b);
+      const newPlayedCardsHistory = [...gameState.playedCardsHistory, ...sortedDropped, card];
+
       transaction.update(roomRef, {
         lives: newLives,
         status: newStatus,
         lastPlayedCard: card,
-        playedCardsHistory: arrayUnion(card),
+        playedCardsHistory: newPlayedCardsHistory,
         players: updatedPlayers,
         lastEvent: newLastEvent,
         starBlocked: false // UNBLOCK star when a card is played
