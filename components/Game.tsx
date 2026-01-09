@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { GameState, Player, GameEventType } from '../types';
 import { playCard, nextLevel, resetToLobby, proposeStar, submitStarVote, leaveRoom } from '../services/gameService';
+import { triggerErrorVibration, triggerSuccessVibration } from '../services/haptics';
 import Card from './Card';
 import NinjaStarAction from './NinjaStarAction';
 import { COLORS } from '../constants';
@@ -27,6 +28,14 @@ const Game: React.FC<GameProps> = ({ gameState, currentUser, onLeave, onOpenProf
   useEffect(() => {
     if (gameState.lastEvent) {
       const event = gameState.lastEvent;
+
+      // Haptics
+      if (['mistake', 'game_over'].includes(event.type)) {
+        triggerErrorVibration();
+      } else if (['level_complete', 'victory'].includes(event.type)) {
+        triggerSuccessVibration();
+      }
+
       if (['mistake', 'level_complete', 'game_over', 'victory', 'star_used'].includes(event.type)) {
         setFeedback({ type: event.type, message: event.message });
         if (['mistake', 'level_complete', 'star_used'].includes(event.type)) {
