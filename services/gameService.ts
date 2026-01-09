@@ -274,11 +274,17 @@ export const playCard = async (roomId: string, playerUid: string, card: number) 
       }
 
       // 6. Prepare Updates
+      // Logic Fix: Add dropped cards to history so they are "played" before the high card
+      const lowerCardsSorted = lowerCardsFound.sort((a, b) => a - b);
+      // We cannot use arrayUnion for multiple custom ordered items easily in one go if we want precise order at the end
+      // So we read the current history from gameState (which we have) and append locally.
+      const newPlayedCardsHistory = [...gameState.playedCardsHistory, ...lowerCardsSorted, card];
+
       const updatePayload: any = {
         lives: newLives,
         status: newStatus,
         lastPlayedCard: card,
-        playedCardsHistory: arrayUnion(card),
+        playedCardsHistory: newPlayedCardsHistory,
         players: updatedPlayers,
         lastEvent: newLastEvent,
         starBlocked: false,
@@ -410,6 +416,10 @@ const executeStarEffect = async (transaction: any, roomRef: any, gameState: Game
     };
   }
 
+  // Logic Fix: Update stack with removed cards
+  const sortedRemoved = cardsRemoved.sort((a, b) => a - b);
+  const newPlayedCardsHistory = [...gameState.playedCardsHistory, ...sortedRemoved];
+
   const updatePayload: any = {
     stars: Math.max(0, gameState.stars - 1),
     starVote: null,
@@ -417,7 +427,9 @@ const executeStarEffect = async (transaction: any, roomRef: any, gameState: Game
     status: newStatus,
     lastEvent: newLastEvent,
     starsUsed: newStarsUsed,
-    starsEfficiency: newStarsEfficiency
+    starsEfficiency: newStarsEfficiency,
+    lastPlayedCard: threshold, // Set top card to the highest removed one
+    playedCardsHistory: newPlayedCardsHistory
   };
 
   transaction.update(roomRef, updatePayload);
