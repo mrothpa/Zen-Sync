@@ -194,6 +194,7 @@ export const startLevel = async (roomId: string, level: number, currentPlayers: 
 
 export const playCard = async (roomId: string, playerUid: string, card: number) => {
   const roomRef = doc(db, 'rooms', roomId);
+  let finalStateForArchive: GameState | null = null;
 
   try {
     await runTransaction(db, async (transaction) => {
@@ -283,14 +284,19 @@ export const playCard = async (roomId: string, playerUid: string, card: number) 
         errorsMade: newErrorsMade
       };
 
-      // 7. ARCHIVE IF GAME ENDED
-      if (newStatus === 'game_over' || newStatus === 'victory') {
-        const finalGameState = { ...gameState, ...updatePayload };
-        await finalizeGameStats(transaction, finalGameState);
-      }
-
       transaction.update(roomRef, updatePayload);
+
+      // 7. Check if Game Ended (For Post-Transaction Archiving)
+      if (newStatus === 'game_over' || newStatus === 'victory') {
+         finalStateForArchive = { ...gameState, ...updatePayload };
+      }
     });
+
+    // 8. Execute Archiving OUTSIDE the main transaction to avoid "Reads after Writes"
+    if (finalStateForArchive) {
+       await archiveMatchAndNotify(finalStateForArchive);
+    }
+
   } catch (e) {
     console.log("Transaction failed: ", e);
   }
@@ -312,6 +318,7 @@ export const proposeStar = async (roomId: string, requester: Player) => {
 
 export const submitStarVote = async (roomId: string, voterUid: string, approved: boolean) => {
   const roomRef = doc(db, 'rooms', roomId);
+  let finalStateForArchive: GameState | null = null;
   
   await runTransaction(db, async (transaction) => {
     const sfDoc = await transaction.get(roomRef);
@@ -332,15 +339,23 @@ export const submitStarVote = async (roomId: string, voterUid: string, approved:
 
        if (newApprovals.length >= requiredVotes) {
           // Pass transaction to effect logic
-          await executeStarEffect(transaction, roomRef, gameState);
+          const resultState = await executeStarEffect(transaction, roomRef, gameState);
+          if (resultState) {
+            finalStateForArchive = resultState;
+          }
        } else {
           transaction.update(roomRef, { "starVote.approvedBy": newApprovals });
        }
     }
   });
+
+  // Execute Archiving OUTSIDE transaction
+  if (finalStateForArchive) {
+    await archiveMatchAndNotify(finalStateForArchive);
+  }
 };
 
-const executeStarEffect = async (transaction: any, roomRef: any, gameState: GameState) => {
+const executeStarEffect = async (transaction: any, roomRef: any, gameState: GameState): Promise<GameState | null> => {
   // Logic: Max of min cards
   const lowestCardsPerPlayer: number[] = [];
   gameState.players.forEach(p => {
@@ -349,7 +364,7 @@ const executeStarEffect = async (transaction: any, roomRef: any, gameState: Game
 
   if (lowestCardsPerPlayer.length === 0) {
     transaction.update(roomRef, { starVote: null });
-    return;
+    return null;
   }
 
   const threshold = Math.max(...lowestCardsPerPlayer);
@@ -404,28 +419,27 @@ const executeStarEffect = async (transaction: any, roomRef: any, gameState: Game
     starsEfficiency: newStarsEfficiency
   };
 
-  // ARCHIVE IF GAME ENDED (Via Star)
-  if (newStatus === 'game_over' || newStatus === 'victory') {
-    const finalGameState = { ...gameState, ...updatePayload };
-    await finalizeGameStats(transaction, finalGameState);
-  }
-
   transaction.update(roomRef, updatePayload);
+
+  // Return full state if game ended, for archiving logic
+  if (newStatus === 'game_over' || newStatus === 'victory') {
+    return { ...gameState, ...updatePayload };
+  }
+  return null;
 };
 
 // --- STATS & ARCHIVING ---
 
 /**
- * Handles all database updates when a game concludes.
- * 1. Reads user profiles.
- * 2. Creates a Match record.
- * 3. Updates User Stats (games played, high score).
+ * SEPARATE TRANSACTION for Stats Archiving.
+ * Ensures "Reads before Writes" rule is respected by separating
+ * gameplay logic (which writes game state) from stat logic (which reads users then writes stats).
  */
-const finalizeGameStats = async (transaction: any, finalState: GameState) => {
+const archiveMatchAndNotify = async (finalState: GameState) => {
     const matchId = `${finalState.id}_${Date.now()}`;
     const matchRef = doc(db, 'matches', matchId);
     
-    // 1. Prepare Match Data
+    // Prepare Match Data immediately
     const matchData: MatchData = {
         matchId: matchId,
         playerIds: finalState.players.map(p => p.uid),
@@ -441,40 +455,53 @@ const finalizeGameStats = async (transaction: any, finalState: GameState) => {
         durationSeconds: Math.floor((Date.now() - finalState.startTime) / 1000)
     };
 
-    transaction.set(matchRef, matchData);
+    try {
+        await runTransaction(db, async (transaction) => {
+            // 1. READ PHASE: Read all user profiles first
+            const userReads = await Promise.all(
+                finalState.players.map(async (p) => {
+                    if (!p.uid) return { uid: null, doc: null };
+                    const userRef = doc(db, 'users', p.uid);
+                    const userDoc = await transaction.get(userRef);
+                    return { uid: p.uid, doc: userDoc, ref: userRef, name: p.name };
+                })
+            );
 
-    // 2. Update Users (Read-Modify-Write)
-    // We must read all users first to check their existing high score
-    for (const player of finalState.players) {
-        if (!player.uid) continue;
-        
-        const userRef = doc(db, 'users', player.uid);
-        const userDoc = await transaction.get(userRef);
+            // 2. WRITE PHASE: Write match data
+            transaction.set(matchRef, matchData);
 
-        if (userDoc.exists()) {
-            const userData = userDoc.data();
-            const currentHighLevel = userData.highestLevelReached || 0;
-            
-            const newStats: any = {
-                totalGamesPlayed: increment(1)
-            };
+            // 3. WRITE PHASE: Update all users
+            for (const { uid, doc: userDoc, ref, name } of userReads) {
+                if (!uid || !ref) continue;
 
-            // Only update high score if current match is better
-            if (finalState.level > currentHighLevel) {
-                newStats.highestLevelReached = finalState.level;
+                if (userDoc && userDoc.exists()) {
+                    const userData = userDoc.data();
+                    const currentHighLevel = userData.highestLevelReached || 0;
+                    
+                    const updatePayload: any = {
+                        totalGamesPlayed: increment(1)
+                    };
+                    
+                    if (finalState.level > currentHighLevel) {
+                        updatePayload.highestLevelReached = finalState.level;
+                    }
+
+                    transaction.update(ref, updatePayload);
+                } else {
+                    // Create basic profile for anon/new users
+                    transaction.set(ref, {
+                        uid: uid,
+                        isAnonymous: true,
+                        displayName: name,
+                        totalGamesPlayed: 1,
+                        highestLevelReached: finalState.level
+                    });
+                }
             }
-
-            transaction.update(userRef, newStats);
-        } else {
-            // Create user doc if it doesn't exist (e.g. strict anon user without linking yet)
-            transaction.set(userRef, {
-                uid: player.uid,
-                isAnonymous: true,
-                displayName: player.name,
-                totalGamesPlayed: 1,
-                highestLevelReached: finalState.level
-            });
-        }
+        });
+        console.log("Match archived successfully.");
+    } catch (e) {
+        console.error("Failed to archive match:", e);
     }
 };
 
