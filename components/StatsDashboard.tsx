@@ -3,7 +3,7 @@ import React, { useState, useEffect } from 'react';
 import SegmentedControl from './SegmentedControl';
 import { useAuth } from '../contexts/AuthContext';
 import { db } from '../firebase';
-import { collection, doc, getDoc, getDocs, orderBy, query, where } from 'firebase/firestore';
+import { collection, doc, getDoc, getDocs, orderBy, query, where, limit } from 'firebase/firestore';
 import { MatchData, UserProfile } from '../types';
 
 // --- Types for Analytics ---
@@ -41,10 +41,15 @@ const StatsDashboard: React.FC = () => {
   
   // State for real data
   const [loading, setLoading] = useState(false);
-  const [dataFetched, setDataFetched] = useState(false); // Cache flag
+  const [dataFetched, setDataFetched] = useState(false); // Cache flag for Solo/Team
+  const [globalFetched, setGlobalFetched] = useState(false); // Cache flag for Global
   
   // Store RAW matches for Client-Side Filtering
   const [allMatches, setAllMatches] = useState<MatchData[]>([]);
+  
+  // Global Data
+  const [leaderboard, setLeaderboard] = useState<MatchData[]>([]);
+  const [userBestMatch, setUserBestMatch] = useState<MatchData | null>(null);
   
   const [soloData, setSoloData] = useState<SoloStatsData>({ 
     highScore: 0, totalGames: 0, avgEfficiency: '0', avgErrors: '0',
@@ -69,11 +74,17 @@ const StatsDashboard: React.FC = () => {
     return h > 0 ? `${h}h ${m}m` : `${m}m`;
   };
 
+  // Helper: Format Names (Anonymize)
+  const formatTeamNames = (names: string[]) => {
+    return names.map(n => n.toLowerCase().includes('guest') ? 'Guest' : n).join(', ');
+  };
+
   // Helper: Unique Team Key (Sorted IDs)
   const getTeamKey = (playerIds: string[]) => {
     return [...playerIds].sort().join(',');
   };
 
+  // --- Effect 1: Fetch User Data (Solo/Team) ---
   useEffect(() => {
     if (!user || dataFetched) return;
 
@@ -142,15 +153,9 @@ const StatsDashboard: React.FC = () => {
         });
 
         // --- TEAM CALCULATION ---
-        
-        // Maps for aggregation
         const partnerMap: Record<string, PartnerStats> = {};
         const teamMap: Record<string, { 
-            ids: string[], 
-            names: string[], 
-            games: number, 
-            wins: number, 
-            errors: number 
+            ids: string[], names: string[], games: number, wins: number, errors: number 
         }> = {};
         const sizeMap: Record<number, { games: number, levelSum: number }> = {};
 
@@ -158,7 +163,6 @@ const StatsDashboard: React.FC = () => {
             // A. Partner Stats
             m.playerIds.forEach((pid, idx) => {
                 if (pid === user.uid) return; // Skip self
-
                 const pName = m.playerNames[idx] || 'Unknown';
                 if (!partnerMap[pid]) {
                     partnerMap[pid] = { uid: pid, name: pName, games: 0, wins: 0, highestLevel: 0 };
@@ -172,21 +176,15 @@ const StatsDashboard: React.FC = () => {
             if (m.playerIds.length > 1) {
                 const tKey = getTeamKey(m.playerIds);
                 if (!teamMap[tKey]) {
-                    // Extract other names for display
                     const otherNames = m.playerNames.filter((_, i) => m.playerIds[i] !== user.uid);
                     teamMap[tKey] = { 
-                        ids: m.playerIds, 
-                        names: otherNames, 
-                        games: 0, 
-                        wins: 0, 
-                        errors: 0 
+                        ids: m.playerIds, names: otherNames, games: 0, wins: 0, errors: 0 
                     };
                 }
                 teamMap[tKey].games += 1;
                 if (m.levelReached >= 12) teamMap[tKey].wins += 1;
                 teamMap[tKey].errors += (m.errorsMade || 0);
 
-                // C. Size Stats
                 const size = m.playerIds.length;
                 if (!sizeMap[size]) sizeMap[size] = { games: 0, levelSum: 0 };
                 sizeMap[size].games += 1;
@@ -194,24 +192,16 @@ const StatsDashboard: React.FC = () => {
             }
         });
 
-        // 1. Top Partner
         const partners = Object.values(partnerMap);
         const topPartner = partners.length > 0 
-            ? partners.reduce((prev, current) => (prev.games > current.games) ? prev : current) 
-            : null;
+            ? partners.reduce((prev, current) => (prev.games > current.games) ? prev : current) : null;
 
-        // 2 & 3. Best Teams (Min 3 games)
         const eligibleTeams = Object.values(teamMap).filter(t => t.games >= 3);
-        
         const bestWinRateTeam = eligibleTeams.length > 0 
-            ? eligibleTeams.sort((a, b) => (b.wins/b.games) - (a.wins/a.games))[0]
-            : null;
-            
+            ? eligibleTeams.sort((a, b) => (b.wins/b.games) - (a.wins/a.games))[0] : null; 
         const bestSyncTeam = eligibleTeams.length > 0
-            ? eligibleTeams.sort((a, b) => (a.errors/a.games) - (b.errors/b.games))[0] // Lowest errors first
-            : null;
+            ? eligibleTeams.sort((a, b) => (a.errors/a.games) - (b.errors/b.games))[0] : null;
 
-        // 4. Size Stats
         const sizeStats = Object.keys(sizeMap).map(k => {
             const key = parseInt(k);
             return {
@@ -234,7 +224,7 @@ const StatsDashboard: React.FC = () => {
                 games: bestSyncTeam.games
             } : null,
             sizeStats: sizeStats,
-            partnerTable: partners.sort((a, b) => b.games - a.games) // Sort table by games played
+            partnerTable: partners.sort((a, b) => b.games - a.games)
         });
 
       } catch (error) {
@@ -246,6 +236,99 @@ const StatsDashboard: React.FC = () => {
 
     fetchAndCalculate();
   }, [user, dataFetched]);
+
+
+  // --- Effect 2: Fetch Global Leaderboard (Lazy) ---
+  useEffect(() => {
+    if (activeTab === 'global' && !globalFetched && user) {
+        const fetchGlobal = async () => {
+            setLoading(true);
+            try {
+                // 1. Fetch Top 10 Global Matches
+                const globalRef = collection(db, 'matches');
+                const globalQ = query(
+                    globalRef,
+                    orderBy('levelReached', 'desc'),
+                    orderBy('livesLeft', 'desc'),
+                    orderBy('durationSeconds', 'asc'),
+                    orderBy('endTime', 'asc'),
+                    limit(10)
+                );
+                
+                const globalSnap = await getDocs(globalQ);
+                const top10 = globalSnap.docs.map(d => d.data() as MatchData);
+                setLeaderboard(top10);
+
+                // 2. Fetch User's Personal Best (Specific Query as requested)
+                const userBestQ = query(
+                    globalRef,
+                    where('playerIds', 'array-contains', user.uid),
+                    orderBy('levelReached', 'desc'),
+                    orderBy('livesLeft', 'desc'),
+                    orderBy('durationSeconds', 'asc'),
+                    orderBy('endTime', 'asc'),
+                    limit(1)
+                );
+                const userBestSnap = await getDocs(userBestQ);
+                if (!userBestSnap.empty) {
+                    setUserBestMatch(userBestSnap.docs[0].data() as MatchData);
+                }
+
+                setGlobalFetched(true);
+
+            } catch (e: any) {
+                console.error("Leaderboard fetch failed. Check console for index link.", e);
+            } finally {
+                setLoading(false);
+            }
+        };
+        fetchGlobal();
+    }
+  }, [activeTab, globalFetched, user]);
+
+
+  // --- Render Helper: Leaderboard Row ---
+  const LeaderboardRow = ({ match, rank, isUserRow, label }: { match: MatchData, rank: number | string, isUserRow: boolean, label?: string }) => (
+    <div className={`
+        flex items-center p-4 rounded-2xl border transition-colors relative overflow-hidden
+        ${isUserRow ? 'bg-indigo-50 border-indigo-200 shadow-sm' : 'bg-white border-slate-100'}
+    `}>
+        {/* Rank Badge */}
+        <div className={`
+            w-10 h-10 rounded-full flex items-center justify-center font-bold text-lg mr-4 shrink-0
+            ${rank === 1 ? 'bg-amber-100 text-amber-600' : 
+              rank === 2 ? 'bg-slate-200 text-slate-600' : 
+              rank === 3 ? 'bg-orange-100 text-orange-600' : 'bg-slate-50 text-slate-400'}
+        `}>
+            {rank}
+        </div>
+
+        {/* Info */}
+        <div className="flex-1 min-w-0">
+            {label && <div className="text-[10px] uppercase font-bold tracking-wider text-indigo-500 mb-0.5">{label}</div>}
+            <div className="font-medium text-slate-800 truncate text-sm">
+                {formatTeamNames(match.playerNames)}
+            </div>
+            <div className="text-xs text-slate-400 flex gap-2 mt-1">
+                <span className="flex items-center gap-1">
+                    <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                    {formatDuration(match.durationSeconds)}
+                </span>
+                <span className="flex items-center gap-1">
+                    <svg className="w-3 h-3" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M3.172 5.172a4 4 0 015.656 0L10 6.343l1.172-1.171a4 4 0 115.656 5.656L10 17.657l-6.828-6.829a4 4 0 010-5.656z" clipRule="evenodd" /></svg>
+                    {match.livesLeft}
+                </span>
+            </div>
+        </div>
+
+        {/* Level */}
+        <div className="text-right ml-2 shrink-0">
+            <div className="text-xs text-slate-400 font-bold uppercase">Level</div>
+            <div className="text-2xl font-light text-[#01323F] leading-none">{match.levelReached}</div>
+        </div>
+    </div>
+  );
+
 
   return (
     <div className="w-full h-full flex flex-col items-center pt-24 pb-8 px-6 overflow-y-auto">
@@ -273,18 +356,20 @@ const StatsDashboard: React.FC = () => {
             {loading ? (
                 <div className="flex flex-col items-center justify-center h-64 gap-4 animate-[fadeIn_0.3s_ease-out]">
                     <div className="w-10 h-10 border-4 border-slate-200 border-t-[#01323F] rounded-full animate-spin"></div>
-                    <p className="text-slate-400 text-sm">Crunching numbers...</p>
-                </div>
-            ) : !hasPlayed ? (
-                <div className="flex flex-col items-center justify-center h-64 gap-4 text-center p-8 bg-white rounded-3xl border border-slate-100 animate-[fadeIn_0.3s_ease-out]">
-                    <span className="text-4xl">🌱</span>
-                    <h3 className="text-lg font-bold text-slate-700">No games played yet</h3>
-                    <p className="text-slate-500 text-sm">Play your first game to unlock detailed statistics.</p>
+                    <p className="text-slate-400 text-sm">Syncing data...</p>
                 </div>
             ) : (
                 <>
+                {/* --- SOLO TAB --- */}
                 {activeTab === 'solo' && (
-                    <div className="grid grid-cols-2 gap-4 pb-8 animate-[fadeIn_0.3s_ease-out]">
+                     !hasPlayed ? (
+                        <div className="flex flex-col items-center justify-center h-64 gap-4 text-center p-8 bg-white rounded-3xl border border-slate-100 animate-[fadeIn_0.3s_ease-out]">
+                            <span className="text-4xl">🌱</span>
+                            <h3 className="text-lg font-bold text-slate-700">No games played yet</h3>
+                            <p className="text-slate-500 text-sm">Play your first game to unlock detailed statistics.</p>
+                        </div>
+                    ) : (
+                        <div className="grid grid-cols-2 gap-4 pb-8 animate-[fadeIn_0.3s_ease-out]">
                             {/* Card 1: Personal Record */}
                             <div className="bg-white p-4 rounded-3xl shadow-sm border border-slate-100 flex flex-col items-center justify-center gap-2 aspect-[4/3]">
                                 <span className="text-2xl">🏆</span>
@@ -333,10 +418,19 @@ const StatsDashboard: React.FC = () => {
                                 <span className="text-2xl font-bold text-[#01323F]">{soloData.bestLives}</span>
                                 <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider text-center">Max Lives (Won)</span>
                             </div>
-                    </div>
+                        </div>
+                    )
                 )}
 
+                {/* --- TEAM TAB --- */}
                 {activeTab === 'team' && (
+                     !hasPlayed ? (
+                         <div className="flex flex-col items-center justify-center h-64 gap-4 text-center p-8 bg-white rounded-3xl border border-slate-100 animate-[fadeIn_0.3s_ease-out]">
+                             <span className="text-4xl">🌱</span>
+                             <h3 className="text-lg font-bold text-slate-700">No games played yet</h3>
+                             <p className="text-slate-500 text-sm">Play multiplayer games to see team stats.</p>
+                         </div>
+                     ) : (
                     <div className="space-y-6 pb-8 animate-[fadeIn_0.3s_ease-out]">
                         
                         {/* HERO GRID (4 Dark Cards) */}
@@ -467,14 +561,44 @@ const StatsDashboard: React.FC = () => {
                         </div>
 
                     </div>
-                )}
+                ))}
 
+                {/* --- GLOBAL TAB --- */}
                 {activeTab === 'global' && (
-                    <div className="space-y-2 animate-[fadeIn_0.3s_ease-out]">
-                         <h3 className="text-sm font-bold text-slate-400 uppercase tracking-wider mb-4">Global Rankings</h3>
-                         <div className="bg-slate-50 p-6 rounded-2xl text-center text-slate-400 text-sm italic border border-slate-100">
-                            Global leaderboard integration pending.
-                         </div>
+                    <div className="space-y-4 animate-[fadeIn_0.3s_ease-out] pb-8">
+                         <h3 className="text-sm font-bold text-slate-400 uppercase tracking-wider mb-2">Global Rankings</h3>
+                         
+                         {leaderboard.length === 0 ? (
+                             <div className="bg-slate-50 p-8 rounded-2xl text-center text-slate-400 text-sm italic border border-slate-100">
+                                No games recorded globally yet. Be the first!
+                             </div>
+                         ) : (
+                             <div className="space-y-3">
+                                 {leaderboard.map((match, idx) => {
+                                    const isUserRow = user ? match.playerIds.includes(user.uid) : false;
+                                    return (
+                                        <LeaderboardRow 
+                                            key={match.matchId} 
+                                            match={match} 
+                                            rank={idx + 1} 
+                                            isUserRow={isUserRow} 
+                                        />
+                                    );
+                                 })}
+                             </div>
+                         )}
+
+                         {/* "Your Best" Section - Only if user has played AND is not already in top 10 */}
+                         {userBestMatch && !leaderboard.find(m => m.matchId === userBestMatch.matchId) && (
+                             <div className="mt-8 pt-4 border-t border-slate-100">
+                                <LeaderboardRow 
+                                    match={userBestMatch} 
+                                    rank="-" 
+                                    isUserRow={true}
+                                    label="Your Personal Best" 
+                                />
+                             </div>
+                         )}
                     </div>
                 )}
                 </>
