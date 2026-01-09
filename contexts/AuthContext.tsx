@@ -59,16 +59,49 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   // Smart Google Auth: Try to Link -> Fallback to Login
   const linkGoogle = async () => {
-    if (!auth.currentUser) return;
     const provider = new GoogleAuthProvider();
+    
+    // Case 1: No current user -> Just Login
+    if (!auth.currentUser) {
+       await signInWithPopup(auth, provider);
+       return;
+    }
+
+    // Case 2: Anonymous User -> Try to Link, Fallback to Login
     try {
-        // 1. Try to upgrade anonymous account
         const result = await linkWithPopup(auth.currentUser, provider);
         setUser(result.user);
     } catch (error: any) {
-        if (error.code === 'auth/credential-already-in-use') {
-            // 2. Account exists -> Switch to that account (Login)
-            await signInWithPopup(auth, provider);
+        console.log("Google Link Failed:", error.code, error.message);
+        
+        // Error codes that indicate the account already exists
+        if (error.code === 'auth/credential-already-in-use' || error.code === 'auth/email-already-in-use') {
+            console.log("Account exists. Switching to login...");
+            
+            // Try to extract credential using the modular SDK method
+            const credential = GoogleAuthProvider.credentialFromError(error);
+            
+            if (credential) {
+               console.log("Using extracted credential to sign in (no popup needed)...");
+               try {
+                  const result = await signInWithCredential(auth, credential);
+                  setUser(result.user);
+                  return;
+               } catch (credError) {
+                  console.error("Sign in with extracted credential failed", credError);
+                  // proceed to fallback
+               }
+            } else {
+                console.log("No credential found in error object.");
+            }
+
+            // Fallback: Force fresh login with the provider (might be blocked by browser)
+            try {
+                await signInWithPopup(auth, provider);
+            } catch (loginError: any) {
+                console.error("Fallback Login failed:", loginError);
+                throw loginError;
+            }
         } else {
             throw error;
         }
