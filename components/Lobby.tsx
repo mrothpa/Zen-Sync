@@ -104,7 +104,7 @@ const Lobby: React.FC<LobbyProps> = ({ setRoomId, gameState, onOpenProfile }) =>
     const isFull = playerCount >= MAX_PLAYERS;
 
     return (
-      <div className="min-h-screen flex flex-col items-center justify-center bg-slate-50 p-6 relative">
+      <div className="w-full h-full flex flex-col items-center justify-center p-6 relative">
         <HeaderProfile />
 
         <div className="bg-white p-8 rounded-[2rem] shadow-xl w-full max-w-md border border-slate-100 relative">
@@ -202,7 +202,7 @@ const Lobby: React.FC<LobbyProps> = ({ setRoomId, gameState, onOpenProfile }) =>
 
   // --- Entry View ---
   return (
-    <div className="min-h-screen flex flex-col items-center justify-center bg-slate-50 p-6 relative">
+    <div className="w-full h-full flex flex-col items-center justify-center p-6 relative">
       
       <HeaderProfile />
 

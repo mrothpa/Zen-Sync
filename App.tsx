@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { db } from './firebase';
 import { doc, onSnapshot } from 'firebase/firestore';
-import Lobby from './components/Lobby';
+import Home from './components/Home';
 import Game from './components/Game';
 import AuthModal from './components/AuthModal';
 import { GameState } from './types';
@@ -59,7 +59,7 @@ function AppContent() {
             onOpenProfile={() => setIsAuthModalOpen(true)}
          />
       ) : (
-         <Lobby 
+         <Home 
             setRoomId={setRoomId} 
             gameState={gameState} 
             onOpenProfile={() => setIsAuthModalOpen(true)}
