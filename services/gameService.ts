@@ -1,14 +1,20 @@
+
 import { db } from '../firebase';
 import { 
   doc, 
   setDoc, 
   updateDoc, 
-  deleteDoc,
   arrayUnion, 
-  getDoc,
-  runTransaction
+  runTransaction,
+  collection,
+  query,
+  orderBy,
+  limit,
+  getDocs,
+  Timestamp,
+  increment
 } from 'firebase/firestore';
-import { GameState, Player, GameEvent, GameStatus, StarVote } from '../types';
+import { GameState, Player, GameEvent, GameStatus, StarVote, MatchData } from '../types';
 import { INITIAL_LIVES, MAX_LEVEL, MAX_PLAYERS, MAX_LIVES } from '../constants';
 
 // --- Utility: Deck Generation ---
@@ -19,8 +25,6 @@ const calculateInitialLives = (playerCount: number): number => {
 };
 
 const calculateInitialStars = (playerCount: number): number => {
-  // Rule: 1 Star for 2 players, 2 for 3, etc. (n-1)
-  // Ensure at least 1 star if playing with 2+ players for fun, but 0 if solo (dev mode)
   return Math.max(0, playerCount - 1);
 };
 
@@ -59,6 +63,11 @@ export const createRoom = async (user: any): Promise<string> => {
     playedCardsHistory: [],
     players: [initialPlayer],
     createdAt: Date.now(),
+    // Init Stats
+    startTime: Date.now(),
+    errorsMade: 0,
+    starsUsed: 0,
+    starsEfficiency: 0
   };
 
   await setDoc(roomRef, initialState);
@@ -131,10 +140,6 @@ export const toggleReady = async (roomId: string, uid: string, currentPlayers: P
   await updateDoc(doc(db, 'rooms', roomId), { players: updatedPlayers });
 };
 
-/**
- * Starts the game.
- * Calculates lives and stars based on player count.
- */
 export const startGame = async (roomId: string, currentPlayers: Player[]) => {
   if (currentPlayers.length < 2) {
     throw new Error("Minimum 2 players required to start.");
@@ -149,6 +154,10 @@ export const startGame = async (roomId: string, currentPlayers: Player[]) => {
     starBlocked: false,
     playedCardsHistory: [], 
     lastPlayedCard: 0,
+    startTime: Date.now(), // Reset stats on fresh start
+    errorsMade: 0,
+    starsUsed: 0,
+    starsEfficiency: 0,
     lastEvent: {
       type: 'play',
       message: 'Game Started',
@@ -171,7 +180,6 @@ export const startLevel = async (roomId: string, level: number, currentPlayers: 
     players: updatedPlayers,
     lastPlayedCard: 0,
     playedCardsHistory: [],
-    // Clear any stuck votes or blocks
     starVote: null, 
     starBlocked: false,
     lastEvent: {
@@ -181,6 +189,8 @@ export const startLevel = async (roomId: string, level: number, currentPlayers: 
     } as GameEvent
   });
 };
+
+// --- CORE LOGIC: Play Card with Tracking & Finalization ---
 
 export const playCard = async (roomId: string, playerUid: string, card: number) => {
   const roomRef = doc(db, 'rooms', roomId);
@@ -210,14 +220,18 @@ export const playCard = async (roomId: string, playerUid: string, card: number) 
         return p;
       });
 
-      // 3. Update Lives & Status
+      // 3. Update Lives, Status & Stats
       let newLives = gameState.lives;
       let newStatus: GameStatus = gameState.status;
       let newLastEvent: GameEvent;
       const timestamp = Date.now();
+      
+      // Update Errors Stat
+      let newErrorsMade = gameState.errorsMade || 0;
 
       if (isMistake) {
         newLives = gameState.lives - 1;
+        newErrorsMade += 1; // Track Error
         if (newLives <= 0) {
           newStatus = 'game_over';
         }
@@ -257,30 +271,33 @@ export const playCard = async (roomId: string, playerUid: string, card: number) 
          newLastEvent = { type: 'play', message: `Played ${card}`, timestamp };
       }
 
-      // Add dropped cards to history so they are "played" before the high card
-      const sortedDropped = [...lowerCardsFound].sort((a, b) => a - b);
-      const newPlayedCardsHistory = [...gameState.playedCardsHistory, ...sortedDropped, card];
-
-      transaction.update(roomRef, {
+      // 6. Prepare Updates
+      const updatePayload: any = {
         lives: newLives,
         status: newStatus,
         lastPlayedCard: card,
-        playedCardsHistory: newPlayedCardsHistory,
+        playedCardsHistory: arrayUnion(card),
         players: updatedPlayers,
         lastEvent: newLastEvent,
-        starBlocked: false // UNBLOCK star when a card is played
-      });
+        starBlocked: false,
+        errorsMade: newErrorsMade
+      };
+
+      // 7. ARCHIVE IF GAME ENDED
+      if (newStatus === 'game_over' || newStatus === 'victory') {
+        const finalGameState = { ...gameState, ...updatePayload };
+        await finalizeGameStats(transaction, finalGameState);
+      }
+
+      transaction.update(roomRef, updatePayload);
     });
   } catch (e) {
     console.log("Transaction failed: ", e);
   }
 };
 
-/**
- * Ninja Star Logic
- */
+// --- STAR LOGIC with Tracking ---
 
-// 1. Propose a star
 export const proposeStar = async (roomId: string, requester: Player) => {
   const roomRef = doc(db, 'rooms', roomId);
   await updateDoc(roomRef, {
@@ -293,7 +310,6 @@ export const proposeStar = async (roomId: string, requester: Player) => {
   });
 };
 
-// 2. Vote on a star proposal
 export const submitStarVote = async (roomId: string, voterUid: string, approved: boolean) => {
   const roomRef = doc(db, 'rooms', roomId);
   
@@ -302,73 +318,48 @@ export const submitStarVote = async (roomId: string, voterUid: string, approved:
     if (!sfDoc.exists()) throw "Room error";
     const gameState = sfDoc.data() as GameState;
 
-    if (!gameState.starVote) return; // Vote already closed
+    if (!gameState.starVote) return;
 
     if (!approved) {
-      // If ANYONE votes NO, cancel immediately AND BLOCK star usage
-      transaction.update(roomRef, { 
-        starVote: null,
-        starBlocked: true 
-      });
+      transaction.update(roomRef, { starVote: null, starBlocked: true });
       return;
     }
 
-    // Vote YES
     const currentApprovals = gameState.starVote.approvedBy || [];
     if (!currentApprovals.includes(voterUid)) {
        const newApprovals = [...currentApprovals, voterUid];
-       
-       // Check for consensus
-       // We need (Total Players - 1) approvals, because requester is implied YES
-       // The requester cannot vote in the UI, so we just check others.
        const requiredVotes = gameState.players.length - 1;
 
        if (newApprovals.length >= requiredVotes) {
-          // UNANIMOUS! Execute Star Effect
+          // Pass transaction to effect logic
           await executeStarEffect(transaction, roomRef, gameState);
        } else {
-          // Just update vote count
-          transaction.update(roomRef, { 
-            "starVote.approvedBy": newApprovals 
-          });
+          transaction.update(roomRef, { "starVote.approvedBy": newApprovals });
        }
     }
   });
 };
 
-// 3. Execute Star Effect (Internal)
 const executeStarEffect = async (transaction: any, roomRef: any, gameState: GameState) => {
-  // Logic Update:
-  // 1. Every player reveals their lowest card.
-  // 2. Determine the MAXIMUM of these revealed cards (Threshold).
-  // 3. Remove ALL cards from ALL players that are smaller OR EQUAL to the Threshold.
-
-  // A. Get lowest card from each player
+  // Logic: Max of min cards
   const lowestCardsPerPlayer: number[] = [];
   gameState.players.forEach(p => {
-    if (p.hand.length > 0) {
-      lowestCardsPerPlayer.push(Math.min(...p.hand));
-    }
+    if (p.hand.length > 0) lowestCardsPerPlayer.push(Math.min(...p.hand));
   });
 
   if (lowestCardsPerPlayer.length === 0) {
-    // Should not happen if game is playing
     transaction.update(roomRef, { starVote: null });
     return;
   }
 
-  // B. Determine Threshold (Highest of the lowest cards)
   const threshold = Math.max(...lowestCardsPerPlayer);
 
-  // C. Remove cards <= Threshold from ALL hands
+  // Cards removed logic
   const cardsRemoved: number[] = [];
   const updatedPlayers = gameState.players.map(p => {
     const kept = [];
-    const removed = [];
     for (const c of p.hand) {
-      // CHANGED: Now inclusive (<=)
       if (c <= threshold) {
-        removed.push(c);
         cardsRemoved.push(c);
       } else {
         kept.push(c);
@@ -377,7 +368,11 @@ const executeStarEffect = async (transaction: any, roomRef: any, gameState: Game
     return { ...p, hand: kept };
   });
 
-  // D. Level Completion Check
+  // Track Stats
+  const newStarsUsed = (gameState.starsUsed || 0) + 1;
+  const newStarsEfficiency = (gameState.starsEfficiency || 0) + cardsRemoved.length;
+
+  // Level Completion Check
   const allHandsEmpty = updatedPlayers.every(p => p.hand.length === 0);
   let newStatus: GameStatus = gameState.status;
   let newLastEvent: GameEvent;
@@ -391,7 +386,6 @@ const executeStarEffect = async (transaction: any, roomRef: any, gameState: Game
       newLastEvent = { type: 'level_complete', message: 'Level Complete!', timestamp: Date.now() };
     }
   } else {
-    // Normal star event
     newLastEvent = {
       type: 'star_used',
       message: `Ninja Star! Dropped cards <= ${threshold}.`,
@@ -400,21 +394,105 @@ const executeStarEffect = async (transaction: any, roomRef: any, gameState: Game
     };
   }
 
-  // E. Commit
-  const sortedRemoved = cardsRemoved.sort((a, b) => a - b);
-  const newPlayedCardsHistory = [...(gameState.playedCardsHistory || []), ...sortedRemoved];
-  
-  transaction.update(roomRef, {
+  const updatePayload: any = {
     stars: Math.max(0, gameState.stars - 1),
-    starVote: null, // Clear vote
+    starVote: null,
     players: updatedPlayers,
     status: newStatus,
     lastEvent: newLastEvent,
-    lastPlayedCard: threshold,
-    playedCardsHistory: newPlayedCardsHistory
-  });
+    starsUsed: newStarsUsed,
+    starsEfficiency: newStarsEfficiency
+  };
+
+  // ARCHIVE IF GAME ENDED (Via Star)
+  if (newStatus === 'game_over' || newStatus === 'victory') {
+    const finalGameState = { ...gameState, ...updatePayload };
+    await finalizeGameStats(transaction, finalGameState);
+  }
+
+  transaction.update(roomRef, updatePayload);
 };
 
+// --- STATS & ARCHIVING ---
+
+/**
+ * Handles all database updates when a game concludes.
+ * 1. Reads user profiles.
+ * 2. Creates a Match record.
+ * 3. Updates User Stats (games played, high score).
+ */
+const finalizeGameStats = async (transaction: any, finalState: GameState) => {
+    const matchId = `${finalState.id}_${Date.now()}`;
+    const matchRef = doc(db, 'matches', matchId);
+    
+    // 1. Prepare Match Data
+    const matchData: MatchData = {
+        matchId: matchId,
+        playerIds: finalState.players.map(p => p.uid),
+        playerNames: finalState.players.map(p => p.name),
+        result: finalState.status === 'victory' ? 'victory' : 'game_over',
+        levelReached: finalState.level,
+        livesLeft: finalState.lives,
+        starsUsed: finalState.starsUsed || 0,
+        starsEfficiency: finalState.starsEfficiency || 0,
+        errorsMade: finalState.errorsMade || 0,
+        startTime: finalState.startTime,
+        endTime: Date.now(),
+        durationSeconds: Math.floor((Date.now() - finalState.startTime) / 1000)
+    };
+
+    transaction.set(matchRef, matchData);
+
+    // 2. Update Users (Read-Modify-Write)
+    // We must read all users first to check their existing high score
+    for (const player of finalState.players) {
+        if (!player.uid) continue;
+        
+        const userRef = doc(db, 'users', player.uid);
+        const userDoc = await transaction.get(userRef);
+
+        if (userDoc.exists()) {
+            const userData = userDoc.data();
+            const currentHighLevel = userData.highestLevelReached || 0;
+            
+            const newStats: any = {
+                totalGamesPlayed: increment(1)
+            };
+
+            // Only update high score if current match is better
+            if (finalState.level > currentHighLevel) {
+                newStats.highestLevelReached = finalState.level;
+            }
+
+            transaction.update(userRef, newStats);
+        } else {
+            // Create user doc if it doesn't exist (e.g. strict anon user without linking yet)
+            transaction.set(userRef, {
+                uid: player.uid,
+                isAnonymous: true,
+                displayName: player.name,
+                totalGamesPlayed: 1,
+                highestLevelReached: finalState.level
+            });
+        }
+    }
+};
+
+export const getGlobalLeaderboard = async () => {
+    // Sort logic: Highest Level > Most Lives Left > Fastest Time > Oldest Date
+    const matchesRef = collection(db, 'matches');
+    const q = query(
+        matchesRef,
+        orderBy('levelReached', 'desc'),
+        orderBy('livesLeft', 'desc'),
+        orderBy('durationSeconds', 'asc'),
+        orderBy('endTime', 'asc'),
+        limit(50)
+    );
+    
+    const snapshot = await getDocs(q);
+    return snapshot.docs.map(doc => doc.data() as MatchData);
+};
 
 export const nextLevel = async (gameState: GameState) => {
   const allHandsEmpty = gameState.players.every(p => p.hand.length === 0);
@@ -425,18 +503,13 @@ export const nextLevel = async (gameState: GameState) => {
   let newLives = gameState.lives;
   let newStars = gameState.stars;
 
-  // Level Up Rewards
-  // Lives: After Level 3, 6, 9
   if (currentLevel === 3 || currentLevel === 6 || currentLevel === 9) {
     newLives = Math.min(newLives + 1, MAX_LIVES);
   }
-
-  // Stars: After Level 2, 5, 8
   if (currentLevel === 2 || currentLevel === 5 || currentLevel === 8) {
     newStars = newStars + 1;
   }
 
-  // Update lives/stars first if changed
   if (newLives !== gameState.lives || newStars !== gameState.stars) {
      await updateDoc(doc(db, 'rooms', gameState.id), { lives: newLives, stars: newStars });
   }
@@ -454,6 +527,11 @@ export const resetToLobby = async (roomId: string) => {
     lastPlayedCard: 0,
     playedCardsHistory: [],
     starVote: null,
+    // Reset Stats for new game
+    startTime: Date.now(),
+    errorsMade: 0,
+    starsUsed: 0,
+    starsEfficiency: 0,
     lastEvent: { type: 'play', message: 'Reset to Lobby', timestamp: Date.now() } as GameEvent
   });
 };

@@ -37,10 +37,35 @@ export interface GameState {
   players: Player[];
   createdAt: number;
   lastEvent?: GameEvent;
+
+  // Tracking Stats
+  startTime: number;
+  errorsMade: number;
+  starsUsed: number;
+  starsEfficiency: number;  // Total Cards removed by Stars 
 }
 
 export interface UserProfile {
   uid: string;
   displayName: string | null;
   isAnonymous: boolean;
+
+  // Stats
+  totalGamesPlayed?: number;
+  highestLevelReached?: number;
+}
+
+export interface MatchData {
+  matchId: string;
+  playerIds: string[];
+  playerNames: string[];
+  result: 'victory' | 'game_over';
+  levelReached: number;
+  livesLeft: number;
+  starsUsed: number;
+  starsEfficiency: number;
+  errorsMade: number;
+  startTime: number;
+  endTime: number;
+  durationSeconds: number;
 }
