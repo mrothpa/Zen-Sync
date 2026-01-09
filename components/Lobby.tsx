@@ -165,7 +165,7 @@ const Lobby: React.FC<LobbyProps> = ({ setRoomId, gameState, onOpenProfile }) =>
                     onClick={() => toggleReady(gameState.id, user.uid, gameState.players)}
                     className={`text-xs px-3 py-1 rounded-full font-bold transition-colors ${p.ready ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-200 text-slate-600'}`}
                   >
-                    {p.ready ? 'READY' : 'NOT READY'}
+                    {p.ready ? 'NOT READY' : 'READY'}
                   </button>
                 )}
               </div>
