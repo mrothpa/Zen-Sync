@@ -36,8 +36,72 @@ interface TeamStatsData {
   partnerTable: PartnerStats[];
 }
 
+// --- Helpers ---
+
+// Helper: Format Duration
+const formatDuration = (seconds: number) => {
+  if (seconds < 60) return `${seconds}s`;
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  return h > 0 ? `${h}h ${m}m` : `${m}m`;
+};
+
+// Helper: Format Names (Anonymize)
+const formatTeamNames = (names: string[]) => {
+  return names.map(n => n.toLowerCase().includes('guest') ? 'Guest' : n).join(', ');
+};
+
+// Helper: Unique Team Key (Sorted IDs)
+const getTeamKey = (playerIds: string[]) => {
+  return [...playerIds].sort().join(',');
+};
+
+// --- Sub-components ---
+
+const LeaderboardRow = ({ match, rank, isUserRow, label }: { match: MatchData, rank: number | string, isUserRow: boolean, label?: string }) => (
+  <div className={`
+      flex items-center p-4 rounded-2xl border transition-colors relative overflow-hidden
+      ${isUserRow ? 'bg-indigo-50 border-indigo-200 shadow-sm' : 'bg-white border-slate-100'}
+  `}>
+      {/* Rank Badge */}
+      <div className={`
+          w-10 h-10 rounded-full flex items-center justify-center font-bold text-lg mr-4 shrink-0
+          ${rank === 1 ? 'bg-amber-100 text-amber-600' : 
+            rank === 2 ? 'bg-slate-200 text-slate-600' : 
+            rank === 3 ? 'bg-orange-100 text-orange-600' : 'bg-slate-50 text-slate-400'}
+      `}>
+          {rank}
+      </div>
+
+      {/* Info */}
+      <div className="flex-1 min-w-0">
+          {label && <div className="text-[10px] uppercase font-bold tracking-wider text-indigo-500 mb-0.5">{label}</div>}
+          <div className="font-medium text-slate-800 truncate text-sm">
+              {formatTeamNames(match.playerNames)}
+          </div>
+          <div className="text-xs text-slate-400 flex gap-2 mt-1">
+              <span className="flex items-center gap-1">
+                  <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                  {formatDuration(match.durationSeconds)}
+              </span>
+              <span className="flex items-center gap-1">
+                  <svg className="w-3 h-3" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M3.172 5.172a4 4 0 015.656 0L10 6.343l1.172-1.171a4 4 0 115.656 5.656L10 17.657l-6.828-6.829a4 4 0 010-5.656z" clipRule="evenodd" /></svg>
+                  {match.livesLeft}
+              </span>
+          </div>
+      </div>
+
+      {/* Level */}
+      <div className="text-right ml-2 shrink-0">
+          <div className="text-xs text-slate-400 font-bold uppercase">Level</div>
+          <div className="text-2xl font-light text-[#01323F] leading-none">{match.levelReached}</div>
+      </div>
+  </div>
+);
+
+
 interface StatsDashboardProps {
-    onOpenProfile: () => void;
+  onOpenProfile: () => void;
 }
 
 const StatsDashboard: React.FC<StatsDashboardProps> = ({ onOpenProfile }) => {
@@ -71,27 +135,9 @@ const StatsDashboard: React.FC<StatsDashboardProps> = ({ onOpenProfile }) => {
   
   const [hasPlayed, setHasPlayed] = useState(false);
 
-  // Helper: Format Duration
-  const formatDuration = (seconds: number) => {
-    if (seconds < 60) return `${seconds}s`;
-    const h = Math.floor(seconds / 3600);
-    const m = Math.floor((seconds % 3600) / 60);
-    return h > 0 ? `${h}h ${m}m` : `${m}m`;
-  };
-
-  // Helper: Format Names (Anonymize)
-  const formatTeamNames = (names: string[]) => {
-    return names.map(n => n.toLowerCase().includes('guest') ? 'Guest' : n).join(', ');
-  };
-
-  // Helper: Unique Team Key (Sorted IDs)
-  const getTeamKey = (playerIds: string[]) => {
-    return [...playerIds].sort().join(',');
-  };
-
   // --- Effect 1: Fetch User Data (Solo/Team) ---
   useEffect(() => {
-    // SECURITY: Do not fetch for anonymous users to save reads in firebase
+    // SECURITY: Do not fetch stats for anonymous users to save reads
     if (!user || user.isAnonymous || dataFetched) return;
 
     const fetchAndCalculate = async () => {
@@ -246,7 +292,7 @@ const StatsDashboard: React.FC<StatsDashboardProps> = ({ onOpenProfile }) => {
 
   // --- Effect 2: Fetch Global Leaderboard (Lazy) ---
   useEffect(() => {
-    // SECURITY: Block for anonymous users
+    // SECURITY: Block for guests
     if (activeTab === 'global' && !globalFetched && user && !user.isAnonymous) {
         const fetchGlobal = async () => {
             setLoading(true);
@@ -294,49 +340,6 @@ const StatsDashboard: React.FC<StatsDashboardProps> = ({ onOpenProfile }) => {
   }, [activeTab, globalFetched, user]);
 
 
-  // --- Render Helper: Leaderboard Row ---
-  const LeaderboardRow = ({ match, rank, isUserRow, label }: { match: MatchData, rank: number | string, isUserRow: boolean, label?: string }) => (
-    <div className={`
-        flex items-center p-4 rounded-2xl border transition-colors relative overflow-hidden
-        ${isUserRow ? 'bg-indigo-50 border-indigo-200 shadow-sm' : 'bg-white border-slate-100'}
-    `}>
-        {/* Rank Badge */}
-        <div className={`
-            w-10 h-10 rounded-full flex items-center justify-center font-bold text-lg mr-4 shrink-0
-            ${rank === 1 ? 'bg-amber-100 text-amber-600' : 
-              rank === 2 ? 'bg-slate-200 text-slate-600' : 
-              rank === 3 ? 'bg-orange-100 text-orange-600' : 'bg-slate-50 text-slate-400'}
-        `}>
-            {rank}
-        </div>
-
-        {/* Info */}
-        <div className="flex-1 min-w-0">
-            {label && <div className="text-[10px] uppercase font-bold tracking-wider text-indigo-500 mb-0.5">{label}</div>}
-            <div className="font-medium text-slate-800 truncate text-sm">
-                {formatTeamNames(match.playerNames)}
-            </div>
-            <div className="text-xs text-slate-400 flex gap-2 mt-1">
-                <span className="flex items-center gap-1">
-                    <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
-                    {formatDuration(match.durationSeconds)}
-                </span>
-                <span className="flex items-center gap-1">
-                    <svg className="w-3 h-3" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M3.172 5.172a4 4 0 015.656 0L10 6.343l1.172-1.171a4 4 0 115.656 5.656L10 17.657l-6.828-6.829a4 4 0 010-5.656z" clipRule="evenodd" /></svg>
-                    {match.livesLeft}
-                </span>
-            </div>
-        </div>
-
-        {/* Level */}
-        <div className="text-right ml-2 shrink-0">
-            <div className="text-xs text-slate-400 font-bold uppercase">Level</div>
-            <div className="text-2xl font-light text-[#01323F] leading-none">{match.levelReached}</div>
-        </div>
-    </div>
-  );
-
-
   return (
     <div className="w-full h-full flex flex-col items-center pt-24 pb-8 px-6 overflow-y-auto">
       <div className="max-w-md w-full space-y-8">
@@ -360,6 +363,7 @@ const StatsDashboard: React.FC<StatsDashboardProps> = ({ onOpenProfile }) => {
 
         {/* Content Area */}
         <div className="min-h-[300px] relative">
+            
             {/* GUEST LOCK SCREEN */}
             {user?.isAnonymous ? (
                 <div className="absolute inset-0 z-10 flex flex-col items-center justify-center text-center p-8 bg-white/50 backdrop-blur-md rounded-3xl border border-white/50 shadow-sm animate-[fadeIn_0.3s_ease-out]">
@@ -382,7 +386,6 @@ const StatsDashboard: React.FC<StatsDashboardProps> = ({ onOpenProfile }) => {
             ) : (
                 /* AUTHENTICATED CONTENT */
                 <>
-
                 {loading ? (
                     <div className="flex flex-col items-center justify-center h-64 gap-4 animate-[fadeIn_0.3s_ease-out]">
                         <div className="w-10 h-10 border-4 border-slate-200 border-t-[#01323F] rounded-full animate-spin"></div>
