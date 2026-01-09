@@ -83,7 +83,7 @@ const Home: React.FC<HomeProps> = ({ setRoomId, gameState, onOpenProfile }) => {
             </div>
           ) : (
             <div className="w-full h-full">
-                <StatsDashboard />
+                <StatsDashboard onOpenProfile={onOpenProfile} />
             </div>
           )}
         </motion.div>

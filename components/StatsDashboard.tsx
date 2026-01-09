@@ -5,6 +5,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { db } from '../firebase';
 import { collection, doc, getDoc, getDocs, orderBy, query, where, limit } from 'firebase/firestore';
 import { MatchData, UserProfile } from '../types';
+import { COLORS } from '../constants';
 
 // --- Types for Analytics ---
 
@@ -35,7 +36,11 @@ interface TeamStatsData {
   partnerTable: PartnerStats[];
 }
 
-const StatsDashboard: React.FC = () => {
+interface StatsDashboardProps {
+    onOpenProfile: () => void;
+}
+
+const StatsDashboard: React.FC<StatsDashboardProps> = ({ onOpenProfile }) => {
   const { user } = useAuth();
   const [activeTab, setActiveTab] = useState('solo');
   
@@ -86,7 +91,8 @@ const StatsDashboard: React.FC = () => {
 
   // --- Effect 1: Fetch User Data (Solo/Team) ---
   useEffect(() => {
-    if (!user || dataFetched) return;
+    // SECURITY: Do not fetch for anonymous users to save reads in firebase
+    if (!user || user.isAnonymous || dataFetched) return;
 
     const fetchAndCalculate = async () => {
       setLoading(true);
@@ -240,7 +246,8 @@ const StatsDashboard: React.FC = () => {
 
   // --- Effect 2: Fetch Global Leaderboard (Lazy) ---
   useEffect(() => {
-    if (activeTab === 'global' && !globalFetched && user) {
+    // SECURITY: Block for anonymous users
+    if (activeTab === 'global' && !globalFetched && user && !user.isAnonymous) {
         const fetchGlobal = async () => {
             setLoading(true);
             try {
@@ -352,254 +359,279 @@ const StatsDashboard: React.FC = () => {
         />
 
         {/* Content Area */}
-        <div className="min-h-[300px]">
-            {loading ? (
-                <div className="flex flex-col items-center justify-center h-64 gap-4 animate-[fadeIn_0.3s_ease-out]">
-                    <div className="w-10 h-10 border-4 border-slate-200 border-t-[#01323F] rounded-full animate-spin"></div>
-                    <p className="text-slate-400 text-sm">Syncing data...</p>
+        <div className="min-h-[300px] relative">
+            {/* GUEST LOCK SCREEN */}
+            {user?.isAnonymous ? (
+                <div className="absolute inset-0 z-10 flex flex-col items-center justify-center text-center p-8 bg-white/50 backdrop-blur-md rounded-3xl border border-white/50 shadow-sm animate-[fadeIn_0.3s_ease-out]">
+                    <div className="w-16 h-16 bg-indigo-50 rounded-full flex items-center justify-center mb-4 text-indigo-500 shadow-sm">
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-8 h-8">
+                            <path fillRule="evenodd" d="M12 1.5a5.25 5.25 0 00-5.25 5.25v3a3 3 0 00-3 3v6.75a3 3 0 003 3h10.5a3 3 0 003-3v-6.75a3 3 0 00-3-3v-3c0-2.9-2.35-5.25-5.25-5.25zm3.75 8.25v-3a3.75 3.75 0 10-7.5 0v3h7.5z" clipRule="evenodd" />
+                        </svg>
+                    </div>
+                    <h3 className="text-xl font-bold text-slate-800 mb-2">Unlock Your Stats</h3>
+                    <p className="text-slate-500 text-sm mb-6 max-w-xs">
+                        Statistics are only available for registered accounts. Link your account to save your progress, view leaderboards, and analyze team performance.
+                    </p>
+                    <button 
+                        onClick={onOpenProfile}
+                        className={`${COLORS.primary} ${COLORS.onPrimary} px-8 py-3 rounded-xl font-bold shadow-lg hover:brightness-110 transition-all`}
+                    >
+                        Link Account Now
+                    </button>
                 </div>
             ) : (
+                /* AUTHENTICATED CONTENT */
                 <>
-                {/* --- SOLO TAB --- */}
-                {activeTab === 'solo' && (
-                     !hasPlayed ? (
-                        <div className="flex flex-col items-center justify-center h-64 gap-4 text-center p-8 bg-white rounded-3xl border border-slate-100 animate-[fadeIn_0.3s_ease-out]">
-                            <span className="text-4xl">🌱</span>
-                            <h3 className="text-lg font-bold text-slate-700">No games played yet</h3>
-                            <p className="text-slate-500 text-sm">Play your first game to unlock detailed statistics.</p>
-                        </div>
-                    ) : (
-                        <div className="grid grid-cols-2 gap-4 pb-8 animate-[fadeIn_0.3s_ease-out]">
-                            {/* Card 1: Personal Record */}
-                            <div className="bg-white p-4 rounded-3xl shadow-sm border border-slate-100 flex flex-col items-center justify-center gap-2 aspect-[4/3]">
-                                <span className="text-2xl">🏆</span>
-                                <span className="text-2xl font-bold text-[#01323F]">{soloData.highScore}</span>
-                                <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider text-center">Highest Level</span>
-                            </div>
-                            {/* Card 2: Experience */}
-                            <div className="bg-white p-4 rounded-3xl shadow-sm border border-slate-100 flex flex-col items-center justify-center gap-2 aspect-[4/3]">
-                                <span className="text-2xl">🎮</span>
-                                <span className="text-2xl font-bold text-[#01323F]">{soloData.totalGames}</span>
-                                <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider text-center">Total Games</span>
-                            </div>
-                            {/* Card 3: Star Efficiency */}
-                            <div className="bg-white p-4 rounded-3xl shadow-sm border border-slate-100 flex flex-col items-center justify-center gap-2 aspect-[4/3]">
-                                <span className="text-2xl">⭐</span>
-                                <span className="text-2xl font-bold text-[#01323F]">{soloData.avgEfficiency}</span>
-                                <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider text-center">Cards/Star Avg</span>
-                            </div>
-                            {/* Card 4: Precision */}
-                            <div className="bg-white p-4 rounded-3xl shadow-sm border border-slate-100 flex flex-col items-center justify-center gap-2 aspect-[4/3]">
-                                <span className="text-2xl">🎯</span>
-                                <span className="text-2xl font-bold text-[#01323F]">{soloData.avgErrors}</span>
-                                <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider text-center">Avg Errors</span>
-                            </div>
-                             {/* Card 5: Total Play Time */}
-                             <div className="bg-white p-4 rounded-3xl shadow-sm border border-slate-100 flex flex-col items-center justify-center gap-2 aspect-[4/3]">
-                                <span className="text-2xl">⏳</span>
-                                <span className="text-xl font-bold text-[#01323F] break-all text-center leading-tight">{soloData.totalPlayTime}</span>
-                                <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider text-center">Play Time</span>
-                            </div>
-                             {/* Card 6: Win Rate */}
-                             <div className="bg-white p-4 rounded-3xl shadow-sm border border-slate-100 flex flex-col items-center justify-center gap-2 aspect-[4/3]">
-                                <span className="text-2xl">👑</span>
-                                <span className="text-2xl font-bold text-[#01323F]">{soloData.winRate}</span>
-                                <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider text-center">Win Rate</span>
-                            </div>
-                             {/* Card 7: Avg Level */}
-                             <div className="bg-white p-4 rounded-3xl shadow-sm border border-slate-100 flex flex-col items-center justify-center gap-2 aspect-[4/3]">
-                                <span className="text-2xl">📊</span>
-                                <span className="text-2xl font-bold text-[#01323F]">{soloData.avgLevel}</span>
-                                <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider text-center">Avg Level</span>
-                            </div>
-                             {/* Card 8: Best Lives (Won Game) */}
-                             <div className="bg-white p-4 rounded-3xl shadow-sm border border-slate-100 flex flex-col items-center justify-center gap-2 aspect-[4/3]">
-                                <span className="text-2xl">❤️</span>
-                                <span className="text-2xl font-bold text-[#01323F]">{soloData.bestLives}</span>
-                                <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider text-center">Max Lives (Won)</span>
-                            </div>
-                        </div>
-                    )
-                )}
 
-                {/* --- TEAM TAB --- */}
-                {activeTab === 'team' && (
-                     !hasPlayed ? (
-                         <div className="flex flex-col items-center justify-center h-64 gap-4 text-center p-8 bg-white rounded-3xl border border-slate-100 animate-[fadeIn_0.3s_ease-out]">
-                             <span className="text-4xl">🌱</span>
-                             <h3 className="text-lg font-bold text-slate-700">No games played yet</h3>
-                             <p className="text-slate-500 text-sm">Play multiplayer games to see team stats.</p>
-                         </div>
-                     ) : (
-                    <div className="space-y-6 pb-8 animate-[fadeIn_0.3s_ease-out]">
-                        
-                        {/* HERO GRID (4 Dark Cards) */}
-                        <div className="grid grid-cols-2 gap-4">
+                {loading ? (
+                    <div className="flex flex-col items-center justify-center h-64 gap-4 animate-[fadeIn_0.3s_ease-out]">
+                        <div className="w-10 h-10 border-4 border-slate-200 border-t-[#01323F] rounded-full animate-spin"></div>
+                        <p className="text-slate-400 text-sm">Syncing data...</p>
+                    </div>
+                ) : (
+                    <>
+                    {/* --- SOLO TAB --- */}
+                    {activeTab === 'solo' && (
+                        !hasPlayed ? (
+                            <div className="flex flex-col items-center justify-center h-64 gap-4 text-center p-8 bg-white rounded-3xl border border-slate-100 animate-[fadeIn_0.3s_ease-out]">
+                                <span className="text-4xl">🌱</span>
+                                <h3 className="text-lg font-bold text-slate-700">No games played yet</h3>
+                                <p className="text-slate-500 text-sm">Play your first game to unlock detailed statistics.</p>
+                            </div>
+                        ) : (
+                            <div className="grid grid-cols-2 gap-4 pb-8 animate-[fadeIn_0.3s_ease-out]">
+                                {/* Card 1: Personal Record */}
+                                <div className="bg-white p-4 rounded-3xl shadow-sm border border-slate-100 flex flex-col items-center justify-center gap-2 aspect-[4/3]">
+                                    <span className="text-2xl">🏆</span>
+                                    <span className="text-2xl font-bold text-[#01323F]">{soloData.highScore}</span>
+                                    <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider text-center">Highest Level</span>
+                                </div>
+                                {/* Card 2: Experience */}
+                                <div className="bg-white p-4 rounded-3xl shadow-sm border border-slate-100 flex flex-col items-center justify-center gap-2 aspect-[4/3]">
+                                    <span className="text-2xl">🎮</span>
+                                    <span className="text-2xl font-bold text-[#01323F]">{soloData.totalGames}</span>
+                                    <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider text-center">Total Games</span>
+                                </div>
+                                {/* Card 3: Star Efficiency */}
+                                <div className="bg-white p-4 rounded-3xl shadow-sm border border-slate-100 flex flex-col items-center justify-center gap-2 aspect-[4/3]">
+                                    <span className="text-2xl">⭐</span>
+                                    <span className="text-2xl font-bold text-[#01323F]">{soloData.avgEfficiency}</span>
+                                    <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider text-center">Cards/Star Avg</span>
+                                </div>
+                                {/* Card 4: Precision */}
+                                <div className="bg-white p-4 rounded-3xl shadow-sm border border-slate-100 flex flex-col items-center justify-center gap-2 aspect-[4/3]">
+                                    <span className="text-2xl">🎯</span>
+                                    <span className="text-2xl font-bold text-[#01323F]">{soloData.avgErrors}</span>
+                                    <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider text-center">Avg Errors</span>
+                                </div>
+                                {/* Card 5: Total Play Time */}
+                                <div className="bg-white p-4 rounded-3xl shadow-sm border border-slate-100 flex flex-col items-center justify-center gap-2 aspect-[4/3]">
+                                    <span className="text-2xl">⏳</span>
+                                    <span className="text-xl font-bold text-[#01323F] break-all text-center leading-tight">{soloData.totalPlayTime}</span>
+                                    <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider text-center">Play Time</span>
+                                </div>
+                                {/* Card 6: Win Rate */}
+                                <div className="bg-white p-4 rounded-3xl shadow-sm border border-slate-100 flex flex-col items-center justify-center gap-2 aspect-[4/3]">
+                                    <span className="text-2xl">👑</span>
+                                    <span className="text-2xl font-bold text-[#01323F]">{soloData.winRate}</span>
+                                    <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider text-center">Win Rate</span>
+                                </div>
+                                {/* Card 7: Avg Level */}
+                                <div className="bg-white p-4 rounded-3xl shadow-sm border border-slate-100 flex flex-col items-center justify-center gap-2 aspect-[4/3]">
+                                    <span className="text-2xl">📊</span>
+                                    <span className="text-2xl font-bold text-[#01323F]">{soloData.avgLevel}</span>
+                                    <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider text-center">Avg Level</span>
+                                </div>
+                                {/* Card 8: Best Lives (Won Game) */}
+                                <div className="bg-white p-4 rounded-3xl shadow-sm border border-slate-100 flex flex-col items-center justify-center gap-2 aspect-[4/3]">
+                                    <span className="text-2xl">❤️</span>
+                                    <span className="text-2xl font-bold text-[#01323F]">{soloData.bestLives}</span>
+                                    <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider text-center">Max Lives (Won)</span>
+                                </div>
+                            </div>
+                        )
+                    )}
+
+                    {/* --- TEAM TAB --- */}
+                    {activeTab === 'team' && (
+                        !hasPlayed ? (
+                            <div className="flex flex-col items-center justify-center h-64 gap-4 text-center p-8 bg-white rounded-3xl border border-slate-100 animate-[fadeIn_0.3s_ease-out]">
+                                <span className="text-4xl">🌱</span>
+                                <h3 className="text-lg font-bold text-slate-700">No games played yet</h3>
+                                <p className="text-slate-500 text-sm">Play multiplayer games to see team stats.</p>
+                            </div>
+                        ) : (
+                        <div className="space-y-6 pb-8 animate-[fadeIn_0.3s_ease-out]">
                             
-                            {/* 1. Top Partner */}
-                            <div className="bg-[#01323F] p-4 rounded-3xl shadow-md text-[#F2FCFF] flex flex-col justify-between h-40 relative overflow-hidden group">
-                                <div className="absolute top-0 right-0 p-4 opacity-10 group-hover:opacity-20 transition-opacity">
-                                    <span className="text-6xl">🤝</span>
-                                </div>
-                                <div>
-                                    <p className="text-[10px] font-bold uppercase tracking-wider opacity-70">Top Partner</p>
-                                    <h3 className="text-lg font-bold leading-tight mt-1 truncate">
-                                        {teamData.topPartner?.name || '-'}
-                                    </h3>
-                                </div>
-                                <div>
-                                    <span className="text-3xl font-light">{teamData.topPartner?.games || 0}</span>
-                                    <span className="text-xs opacity-60 ml-1">games</span>
-                                </div>
-                            </div>
-
-                            {/* 2. Dream Team (Win Rate) */}
-                            <div className="bg-[#01323F] p-4 rounded-3xl shadow-md text-[#F2FCFF] flex flex-col justify-between h-40 relative overflow-hidden group">
-                                <div className="absolute top-0 right-0 p-4 opacity-10 group-hover:opacity-20 transition-opacity">
-                                    <span className="text-6xl">🔥</span>
-                                </div>
-                                <div>
-                                    <p className="text-[10px] font-bold uppercase tracking-wider opacity-70">Best Win Rate</p>
-                                    <div className="flex -space-x-2 mt-2 overflow-hidden py-1">
-                                        {teamData.bestTeamWinRate ? (
-                                            teamData.bestTeamWinRate.names.map((n, i) => (
-                                                <div key={i} className="w-6 h-6 rounded-full bg-indigo-500 flex items-center justify-center text-[8px] font-bold border border-[#01323F] relative z-10" title={n}>
-                                                    {n.charAt(0)}
-                                                </div>
-                                            ))
-                                        ) : <span className="text-xs italic opacity-50">Min 3 games</span>}
+                            {/* HERO GRID (4 Dark Cards) */}
+                            <div className="grid grid-cols-2 gap-4">
+                                
+                                {/* 1. Top Partner */}
+                                <div className="bg-[#01323F] p-4 rounded-3xl shadow-md text-[#F2FCFF] flex flex-col justify-between h-40 relative overflow-hidden group">
+                                    <div className="absolute top-0 right-0 p-4 opacity-10 group-hover:opacity-20 transition-opacity">
+                                        <span className="text-6xl">🤝</span>
+                                    </div>
+                                    <div>
+                                        <p className="text-[10px] font-bold uppercase tracking-wider opacity-70">Top Partner</p>
+                                        <h3 className="text-lg font-bold leading-tight mt-1 truncate">
+                                            {teamData.topPartner?.name || '-'}
+                                        </h3>
+                                    </div>
+                                    <div>
+                                        <span className="text-3xl font-light">{teamData.topPartner?.games || 0}</span>
+                                        <span className="text-xs opacity-60 ml-1">games</span>
                                     </div>
                                 </div>
-                                <div>
-                                    <span className="text-3xl font-light">{teamData.bestTeamWinRate ? teamData.bestTeamWinRate.rate : 0}</span>
-                                    <span className="text-xs opacity-60 ml-1">%</span>
-                                </div>
-                            </div>
 
-                            {/* 3. Highest Sync (Errors) */}
-                            <div className="bg-[#01323F] p-4 rounded-3xl shadow-md text-[#F2FCFF] flex flex-col justify-between h-40 relative overflow-hidden group">
-                                <div className="absolute top-0 right-0 p-4 opacity-10 group-hover:opacity-20 transition-opacity">
-                                    <span className="text-6xl">🧠</span>
-                                </div>
-                                <div>
-                                    <p className="text-[10px] font-bold uppercase tracking-wider opacity-70">Highest Sync</p>
-                                    <p className="text-xs opacity-50 truncate mt-1">
-                                        {teamData.bestTeamSync ? teamData.bestTeamSync.names.join(', ') : 'Min 3 games'}
-                                    </p>
-                                </div>
-                                <div>
-                                    <span className="text-3xl font-light">{teamData.bestTeamSync ? teamData.bestTeamSync.avgErrors : 0}</span>
-                                    <span className="text-xs opacity-60 ml-1">avg err</span>
-                                </div>
-                            </div>
-
-                             {/* 4. Performance by Size (Bar Chart) */}
-                             <div className="bg-[#01323F] p-4 rounded-3xl shadow-md text-[#F2FCFF] flex flex-col h-40 relative overflow-hidden">
-                                <p className="text-[10px] font-bold uppercase tracking-wider opacity-70 mb-2">Avg Level / Size</p>
-                                <div className="flex-1 flex items-end justify-between gap-2 px-1">
-                                    {teamData.sizeStats.length > 0 ? teamData.sizeStats.map((stat) => (
-                                        <div key={stat.size} className="flex flex-col items-center gap-1 w-full">
-                                            <div className="w-full bg-indigo-500/50 rounded-t-sm relative group" style={{ height: `${(parseFloat(stat.avgLevel) / 12) * 80}px`, minHeight: '4px' }}>
-                                                <div className="absolute -top-4 left-1/2 -translate-x-1/2 text-[9px] opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap bg-black/50 px-1 rounded">
-                                                    Lvl {stat.avgLevel}
-                                                </div>
-                                            </div>
-                                            <span className="text-[10px] opacity-60">{stat.size}p</span>
+                                {/* 2. Dream Team (Win Rate) */}
+                                <div className="bg-[#01323F] p-4 rounded-3xl shadow-md text-[#F2FCFF] flex flex-col justify-between h-40 relative overflow-hidden group">
+                                    <div className="absolute top-0 right-0 p-4 opacity-10 group-hover:opacity-20 transition-opacity">
+                                        <span className="text-6xl">🔥</span>
+                                    </div>
+                                    <div>
+                                        <p className="text-[10px] font-bold uppercase tracking-wider opacity-70">Best Win Rate</p>
+                                        <div className="flex -space-x-2 mt-2 overflow-hidden py-1">
+                                            {teamData.bestTeamWinRate ? (
+                                                teamData.bestTeamWinRate.names.map((n, i) => (
+                                                    <div key={i} className="w-6 h-6 rounded-full bg-indigo-500 flex items-center justify-center text-[8px] font-bold border border-[#01323F] relative z-10" title={n}>
+                                                        {n.charAt(0)}
+                                                    </div>
+                                                ))
+                                            ) : <span className="text-xs italic opacity-50">Min 3 games</span>}
                                         </div>
-                                    )) : (
-                                        <div className="w-full h-full flex items-center justify-center text-xs opacity-30 italic">No data</div>
-                                    )}
+                                    </div>
+                                    <div>
+                                        <span className="text-3xl font-light">{teamData.bestTeamWinRate ? teamData.bestTeamWinRate.rate : 0}</span>
+                                        <span className="text-xs opacity-60 ml-1">%</span>
+                                    </div>
+                                </div>
+
+                                {/* 3. Highest Sync (Errors) */}
+                                <div className="bg-[#01323F] p-4 rounded-3xl shadow-md text-[#F2FCFF] flex flex-col justify-between h-40 relative overflow-hidden group">
+                                    <div className="absolute top-0 right-0 p-4 opacity-10 group-hover:opacity-20 transition-opacity">
+                                        <span className="text-6xl">🧠</span>
+                                    </div>
+                                    <div>
+                                        <p className="text-[10px] font-bold uppercase tracking-wider opacity-70">Highest Sync</p>
+                                        <p className="text-xs opacity-50 truncate mt-1">
+                                            {teamData.bestTeamSync ? teamData.bestTeamSync.names.join(', ') : 'Min 3 games'}
+                                        </p>
+                                    </div>
+                                    <div>
+                                        <span className="text-3xl font-light">{teamData.bestTeamSync ? teamData.bestTeamSync.avgErrors : 0}</span>
+                                        <span className="text-xs opacity-60 ml-1">avg err</span>
+                                    </div>
+                                </div>
+
+                                {/* 4. Performance by Size (Bar Chart) */}
+                                <div className="bg-[#01323F] p-4 rounded-3xl shadow-md text-[#F2FCFF] flex flex-col h-40 relative overflow-hidden">
+                                    <p className="text-[10px] font-bold uppercase tracking-wider opacity-70 mb-2">Avg Level / Size</p>
+                                    <div className="flex-1 flex items-end justify-between gap-2 px-1">
+                                        {teamData.sizeStats.length > 0 ? teamData.sizeStats.map((stat) => (
+                                            <div key={stat.size} className="flex flex-col items-center gap-1 w-full">
+                                                <div className="w-full bg-indigo-500/50 rounded-t-sm relative group" style={{ height: `${(parseFloat(stat.avgLevel) / 12) * 80}px`, minHeight: '4px' }}>
+                                                    <div className="absolute -top-4 left-1/2 -translate-x-1/2 text-[9px] opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap bg-black/50 px-1 rounded">
+                                                        Lvl {stat.avgLevel}
+                                                    </div>
+                                                </div>
+                                                <span className="text-[10px] opacity-60">{stat.size}p</span>
+                                            </div>
+                                        )) : (
+                                            <div className="w-full h-full flex items-center justify-center text-xs opacity-30 italic">No data</div>
+                                        )}
+                                    </div>
                                 </div>
                             </div>
-                        </div>
 
-                        {/* PARTNER TABLE */}
-                        <div className="bg-white rounded-3xl border border-slate-200 overflow-hidden shadow-sm">
-                            <div className="px-6 py-4 border-b border-slate-100 bg-slate-50/50">
-                                <h3 className="font-bold text-slate-700">All Partners</h3>
-                            </div>
-                            <div className="max-h-80 overflow-y-auto">
-                                <table className="w-full text-sm text-left">
-                                    <thead className="text-xs text-slate-400 uppercase bg-slate-50 sticky top-0 z-10">
-                                        <tr>
-                                            <th className="px-6 py-3 font-medium">Name</th>
-                                            <th className="px-6 py-3 font-medium text-center">Games</th>
-                                            <th className="px-6 py-3 font-medium text-center">Win %</th>
-                                            <th className="px-6 py-3 font-medium text-right">Best Lvl</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody className="divide-y divide-slate-100">
-                                        {teamData.partnerTable.map((partner) => (
-                                            <tr key={partner.uid} className="hover:bg-slate-50 transition-colors">
-                                                <td className="px-6 py-4 font-medium text-slate-700 truncate max-w-[100px]">
-                                                    {partner.name}
-                                                </td>
-                                                <td className="px-6 py-4 text-center text-slate-500">
-                                                    {partner.games}
-                                                </td>
-                                                <td className="px-6 py-4 text-center">
-                                                    <span className={`px-2 py-1 rounded-full text-xs font-bold 
-                                                        ${(partner.wins / partner.games) > 0.5 ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-500'}`}>
-                                                        {Math.round((partner.wins / partner.games) * 100)}%
-                                                    </span>
-                                                </td>
-                                                <td className="px-6 py-4 text-right font-mono text-slate-600">
-                                                    {partner.highestLevel}
-                                                </td>
-                                            </tr>
-                                        ))}
-                                        {teamData.partnerTable.length === 0 && (
+                            {/* PARTNER TABLE */}
+                            <div className="bg-white rounded-3xl border border-slate-200 overflow-hidden shadow-sm">
+                                <div className="px-6 py-4 border-b border-slate-100 bg-slate-50/50">
+                                    <h3 className="font-bold text-slate-700">All Partners</h3>
+                                </div>
+                                <div className="max-h-80 overflow-y-auto">
+                                    <table className="w-full text-sm text-left">
+                                        <thead className="text-xs text-slate-400 uppercase bg-slate-50 sticky top-0 z-10">
                                             <tr>
-                                                <td colSpan={4} className="px-6 py-8 text-center text-slate-400 italic">
-                                                    No partners found. Go play some multiplayer games!
-                                                </td>
+                                                <th className="px-6 py-3 font-medium">Name</th>
+                                                <th className="px-6 py-3 font-medium text-center">Games</th>
+                                                <th className="px-6 py-3 font-medium text-center">Win %</th>
+                                                <th className="px-6 py-3 font-medium text-right">Best Lvl</th>
                                             </tr>
-                                        )}
-                                    </tbody>
-                                </table>
+                                        </thead>
+                                        <tbody className="divide-y divide-slate-100">
+                                            {teamData.partnerTable.map((partner) => (
+                                                <tr key={partner.uid} className="hover:bg-slate-50 transition-colors">
+                                                    <td className="px-6 py-4 font-medium text-slate-700 truncate max-w-[100px]">
+                                                        {partner.name}
+                                                    </td>
+                                                    <td className="px-6 py-4 text-center text-slate-500">
+                                                        {partner.games}
+                                                    </td>
+                                                    <td className="px-6 py-4 text-center">
+                                                        <span className={`px-2 py-1 rounded-full text-xs font-bold 
+                                                            ${(partner.wins / partner.games) > 0.5 ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-500'}`}>
+                                                            {Math.round((partner.wins / partner.games) * 100)}%
+                                                        </span>
+                                                    </td>
+                                                    <td className="px-6 py-4 text-right font-mono text-slate-600">
+                                                        {partner.highestLevel}
+                                                    </td>
+                                                </tr>
+                                            ))}
+                                            {teamData.partnerTable.length === 0 && (
+                                                <tr>
+                                                    <td colSpan={4} className="px-6 py-8 text-center text-slate-400 italic">
+                                                        No partners found. Go play some multiplayer games!
+                                                    </td>
+                                                </tr>
+                                            )}
+                                        </tbody>
+                                    </table>
+                                </div>
                             </div>
+
                         </div>
+                    ))}
 
-                    </div>
-                ))}
+                    {/* --- GLOBAL TAB --- */}
+                    {activeTab === 'global' && (
+                        <div className="space-y-4 animate-[fadeIn_0.3s_ease-out] pb-8">
+                            <h3 className="text-sm font-bold text-slate-400 uppercase tracking-wider mb-2">Global Rankings</h3>
+                            
+                            {leaderboard.length === 0 ? (
+                                <div className="bg-slate-50 p-8 rounded-2xl text-center text-slate-400 text-sm italic border border-slate-100">
+                                    No games recorded globally yet. Be the first!
+                                </div>
+                            ) : (
+                                <div className="space-y-3">
+                                    {leaderboard.map((match, idx) => {
+                                        const isUserRow = user ? match.playerIds.includes(user.uid) : false;
+                                        return (
+                                            <LeaderboardRow 
+                                                key={match.matchId} 
+                                                match={match} 
+                                                rank={idx + 1} 
+                                                isUserRow={isUserRow} 
+                                            />
+                                        );
+                                    })}
+                                </div>
+                            )}
 
-                {/* --- GLOBAL TAB --- */}
-                {activeTab === 'global' && (
-                    <div className="space-y-4 animate-[fadeIn_0.3s_ease-out] pb-8">
-                         <h3 className="text-sm font-bold text-slate-400 uppercase tracking-wider mb-2">Global Rankings</h3>
-                         
-                         {leaderboard.length === 0 ? (
-                             <div className="bg-slate-50 p-8 rounded-2xl text-center text-slate-400 text-sm italic border border-slate-100">
-                                No games recorded globally yet. Be the first!
-                             </div>
-                         ) : (
-                             <div className="space-y-3">
-                                 {leaderboard.map((match, idx) => {
-                                    const isUserRow = user ? match.playerIds.includes(user.uid) : false;
-                                    return (
-                                        <LeaderboardRow 
-                                            key={match.matchId} 
-                                            match={match} 
-                                            rank={idx + 1} 
-                                            isUserRow={isUserRow} 
-                                        />
-                                    );
-                                 })}
-                             </div>
-                         )}
-
-                         {/* "Your Best" Section - Only if user has played AND is not already in top 10 */}
-                         {userBestMatch && !leaderboard.find(m => m.matchId === userBestMatch.matchId) && (
-                             <div className="mt-8 pt-4 border-t border-slate-100">
-                                <LeaderboardRow 
-                                    match={userBestMatch} 
-                                    rank="-" 
-                                    isUserRow={true}
-                                    label="Your Personal Best" 
-                                />
-                             </div>
-                         )}
-                    </div>
+                            {/* "Your Best" Section - Only if user has played AND is not already in top 10 */}
+                            {userBestMatch && !leaderboard.find(m => m.matchId === userBestMatch.matchId) && (
+                                <div className="mt-8 pt-4 border-t border-slate-100">
+                                    <LeaderboardRow 
+                                        match={userBestMatch} 
+                                        rank="-" 
+                                        isUserRow={true}
+                                        label="Your Personal Best" 
+                                    />
+                                </div>
+                            )}
+                        </div>
+                    )}
+                    </>
                 )}
                 </>
             )}
