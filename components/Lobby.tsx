@@ -15,6 +15,15 @@ const Lobby: React.FC<LobbyProps> = ({ setRoomId, gameState, onOpenProfile }) =>
   const [joinCode, setJoinCode] = useState('');
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [copied, setCopied] = useState(false);
+
+  const handleCopyCode = () => {
+    if (gameState?.id) {
+       navigator.clipboard.writeText(gameState.id);
+       setCopied(true);
+       setTimeout(() => setCopied(false), 2000);
+    }
+  };
 
   const handleCreate = async () => {
     if (!user) return;
@@ -113,7 +122,30 @@ const Lobby: React.FC<LobbyProps> = ({ setRoomId, gameState, onOpenProfile }) =>
 
           <div className="text-center mb-8">
             <span className="text-slate-400 uppercase tracking-widest text-xs font-bold">Room Code</span>
-            <h1 className="text-5xl font-mono font-bold text-slate-800 mt-2 tracking-tighter">{gameState.id}</h1>
+            
+            <div className="flex items-center justify-center gap-3 mt-2 relative">
+                {/* Placeholder to balance the layout (invisible) */}
+                <div className="w-10 h-10 opacity-0 pointer-events-none" />
+
+                <h1 className="text-5xl font-mono font-bold text-slate-800 tracking-tighter">{gameState.id}</h1>
+                
+                <button 
+                  onClick={handleCopyCode}
+                  className="p-2 rounded-xl bg-slate-100 text-slate-500 hover:bg-slate-200 hover:text-indigo-600 transition-all w-10 h-10 flex items-center justify-center transform active:scale-95"
+                  title="Copy Code"
+                >
+                  {copied ? (
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5 text-emerald-500">
+                      <path fillRule="evenodd" d="M19.916 4.626a.75.75 0 01.208 1.04l-9 13.5a.75.75 0 01-1.154.114l-6-6a.75.75 0 011.06-1.06l5.353 5.353 8.493-12.739a.75.75 0 011.04-.208z" clipRule="evenodd" />
+                    </svg>
+                  ) : (
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 17.25v3.375c0 .621-.504 1.125-1.125 1.125h-9.75a1.125 1.125 0 01-1.125-1.125V7.875c0-.621.504-1.125 1.125-1.125H6.75a9.06 9.06 0 011.5.124m7.5 10.376h3.375c.621 0 1.125-.504 1.125-1.125V11.25c0-4.46-3.243-8.161-7.5-8.876a9.06 9.06 0 00-1.5-.124H9.375c-.621 0-1.125.504-1.125 1.125v3.5m7.5 10.375H9.375a1.125 1.125 0 01-1.125-1.125v-9.25m12 6.625v-1.875a3.375 3.375 0 00-3.375-3.375h-1.5" />
+                    </svg>
+                  )}
+                </button>
+            </div>
+
             <div className="flex justify-center gap-2 mt-2">
                <span className={`text-xs px-2 py-0.5 rounded-full font-bold ${isFull ? 'bg-rose-100 text-rose-700' : 'bg-slate-100 text-slate-500'}`}>
                  {playerCount} / {MAX_PLAYERS} Players
