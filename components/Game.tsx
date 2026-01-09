@@ -1,10 +1,11 @@
+
 import React, { useEffect, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { GameState, Player, GameEventType } from '../types';
-import { playCard, nextLevel, resetToLobby, proposeStar, submitStarVote, leaveRoom } from '../services/gameService';
-import { triggerErrorVibration, triggerSuccessVibration } from '../services/haptics';
+import { playCard, nextLevel, resetToLobby, proposeStar, submitStarVote, leaveRoom, sendReaction } from '../services/gameService';
 import Card from './Card';
 import NinjaStarAction from './NinjaStarAction';
+import ReactionOverlay from './ReactionOverlay';
 import { COLORS } from '../constants';
 
 interface GameProps {
@@ -20,6 +21,9 @@ const Game: React.FC<GameProps> = ({ gameState, currentUser, onLeave, onOpenProf
   const [myPlayer, setMyPlayer] = useState<Player | undefined>();
   const [feedback, setFeedback] = useState<{ type: GameEventType, message: string } | null>(null);
   const [showLeaveConfirm, setShowLeaveConfirm] = useState(false);
+  
+  // Emoji Cooldown State
+  const [emojiCooldown, setEmojiCooldown] = useState(false);
 
   useEffect(() => {
     setMyPlayer(gameState.players.find(p => p.uid === currentUser.uid));
@@ -28,14 +32,6 @@ const Game: React.FC<GameProps> = ({ gameState, currentUser, onLeave, onOpenProf
   useEffect(() => {
     if (gameState.lastEvent) {
       const event = gameState.lastEvent;
-
-      // Haptics
-      if (['mistake', 'game_over'].includes(event.type)) {
-        triggerErrorVibration();
-      } else if (['level_complete', 'victory'].includes(event.type)) {
-        triggerSuccessVibration();
-      }
-
       if (['mistake', 'level_complete', 'game_over', 'victory', 'star_used'].includes(event.type)) {
         setFeedback({ type: event.type, message: event.message });
         if (['mistake', 'level_complete', 'star_used'].includes(event.type)) {
@@ -103,6 +99,16 @@ const Game: React.FC<GameProps> = ({ gameState, currentUser, onLeave, onOpenProf
       }
   };
 
+  // --- Emoji Logic ---
+  const handleSendReaction = (emoji: string) => {
+      if (emojiCooldown || !myPlayer) return;
+      
+      sendReaction(gameState.id, emoji, myPlayer);
+      
+      setEmojiCooldown(true);
+      setTimeout(() => setEmojiCooldown(false), 3000); // 3s Cooldown
+  };
+
   // Check if active vote needs my attention
   const activeVote = gameState.starVote;
   const isMyProposal = activeVote?.requesterUid === currentUser.uid;
@@ -113,6 +119,9 @@ const Game: React.FC<GameProps> = ({ gameState, currentUser, onLeave, onOpenProf
   return (
     <div className="flex flex-col h-screen w-full bg-slate-50 overflow-hidden relative transition-colors duration-500 pointer-events-none">
       
+      {/* --- Reaction Overlay (Visuals) --- */}
+      <ReactionOverlay roomId={gameState.id} />
+
       {/* --- Error Pulse --- */}
       <AnimatePresence>
         {feedback?.type === 'mistake' && (
@@ -183,6 +192,28 @@ const Game: React.FC<GameProps> = ({ gameState, currentUser, onLeave, onOpenProf
              )
           ))}
         </div>
+      </div>
+      
+      {/* --- RIGHT SIDE EMOJI BAR --- */}
+      <div className="absolute right-4 top-1/2 -translate-y-1/2 flex flex-col gap-3 pointer-events-auto z-50">
+          {['🤯', '👍', '🙏'].map((emoji) => (
+             <motion.button
+                key={emoji}
+                whileTap={!emojiCooldown ? { scale: 0.9 } : {}}
+                whileHover={!emojiCooldown ? { scale: 1.1 } : {}}
+                onClick={() => handleSendReaction(emoji)}
+                disabled={emojiCooldown}
+                className={`
+                    w-12 h-12 rounded-full flex items-center justify-center text-2xl shadow-lg border border-white/20 transition-all
+                    ${emojiCooldown 
+                        ? 'bg-slate-200 opacity-50 cursor-not-allowed grayscale' 
+                        : 'bg-[#01323F] text-[#F2FCFF] cursor-pointer hover:bg-[#024456]'
+                    }
+                `}
+             >
+                 {emoji}
+             </motion.button>
+          ))}
       </div>
 
       {/* --- Snackbar --- */}

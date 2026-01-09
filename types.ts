@@ -69,3 +69,12 @@ export interface MatchData {
   endTime: number;
   durationSeconds: number;
 }
+
+
+export interface Reaction {
+  id: string;
+  emoji: string;
+  senderId: string;
+  senderName: string; // Helpful for display context
+  timestamp: number;
+}

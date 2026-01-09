@@ -12,9 +12,10 @@ import {
   limit,
   getDocs,
   Timestamp,
-  increment
+  increment,
+  addDoc
 } from 'firebase/firestore';
-import { GameState, Player, GameEvent, GameStatus, StarVote, MatchData } from '../types';
+import { GameState, Player, GameEvent, GameStatus, StarVote, MatchData, Reaction } from '../types';
 import { INITIAL_LIVES, MAX_LEVEL, MAX_PLAYERS, MAX_LIVES } from '../constants';
 
 // --- Utility: Deck Generation ---
@@ -426,6 +427,19 @@ const executeStarEffect = async (transaction: any, roomRef: any, gameState: Game
     return { ...gameState, ...updatePayload };
   }
   return null;
+};
+
+// --- EMOJI REACTIONS ---
+export const sendReaction = async (roomId: string, emoji: string, sender: Player) => {
+    const reactionsRef = collection(db, 'rooms', roomId, 'reactions');
+    const reaction: Omit<Reaction, 'id'> = {
+        emoji,
+        senderId: sender.uid,
+        senderName: sender.name,
+        timestamp: Date.now()
+    };
+    // Add to subcollection (Auto ID)
+    await addDoc(reactionsRef, reaction);
 };
 
 // --- STATS & ARCHIVING ---
