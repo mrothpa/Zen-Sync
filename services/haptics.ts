@@ -1,21 +1,21 @@
 // Utility functions for Haptic Feedback (Vibration)
 
 export const triggerErrorVibration = () => {
+  console.log('[Haptics] Attempting Error Vibration...');
   if (typeof navigator !== 'undefined' && navigator.vibrate) {
-    console.log('[Haptics] Triggering Error Vibration: [100, 50, 200]');
-    // Pattern: 100ms on, 50ms off, 200ms on
-    navigator.vibrate([100, 50, 200]);
+    const success = navigator.vibrate([100, 50, 200]);
+    console.log(`[Haptics] Error Vibration result: ${success}`);
   } else {
-    console.log('[Haptics] Vibration API not supported on this device.');
+    console.log('[Haptics] Vibration API not supported.');
   }
 };
 
 export const triggerSuccessVibration = () => {
+  console.log('[Haptics] Attempting Success Vibration...');
   if (typeof navigator !== 'undefined' && navigator.vibrate) {
-    console.log('[Haptics] Triggering Success Vibration: [50]');
-    // Pattern: 50ms on
-    navigator.vibrate([50]);
+    const success = navigator.vibrate([50]);
+    console.log(`[Haptics] Success Vibration result: ${success}`);
   } else {
-    console.log('[Haptics] Vibration API not supported on this device.');
+    console.log('[Haptics] Vibration API not supported.');
   }
 };

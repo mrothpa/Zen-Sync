@@ -3,6 +3,7 @@ import React, { useEffect, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { GameState, Player, GameEventType } from '../types';
 import { playCard, nextLevel, resetToLobby, proposeStar, submitStarVote, leaveRoom, sendReaction } from '../services/gameService';
+import { triggerErrorVibration, triggerSuccessVibration } from '../services/haptics';
 import Card from './Card';
 import NinjaStarAction from './NinjaStarAction';
 import ReactionOverlay from './ReactionOverlay';
@@ -32,6 +33,15 @@ const Game: React.FC<GameProps> = ({ gameState, currentUser, onLeave, onOpenProf
   useEffect(() => {
     if (gameState.lastEvent) {
       const event = gameState.lastEvent;
+      console.log('[Game] Event received:', event.type, event.timestamp);
+
+      // Haptics
+      if (['mistake', 'game_over'].includes(event.type)) {
+        triggerErrorVibration();
+      } else if (['level_complete', 'victory'].includes(event.type)) {
+        triggerSuccessVibration();
+      }
+
       if (['mistake', 'level_complete', 'game_over', 'victory', 'star_used'].includes(event.type)) {
         setFeedback({ type: event.type, message: event.message });
         if (['mistake', 'level_complete', 'star_used'].includes(event.type)) {
@@ -53,6 +63,18 @@ const Game: React.FC<GameProps> = ({ gameState, currentUser, onLeave, onOpenProf
     if (gameState.status !== 'playing' || card !== lowestCard) {
       return; 
     }
+
+    // --- Haptics: Optimistic Check for Active Player ---
+    // Check if anyone else has a lower card => Mistake!
+    const otherPlayers = gameState.players.filter(p => p.uid !== myPlayer.uid);
+    const mistakeFound = otherPlayers.some(p => p.hand.some(c => c < card));
+    
+    if (mistakeFound) {
+      console.log('[Game] Local mistake detection. Triggering immediate vibration.');
+      triggerErrorVibration();
+    }
+    // --------------------------------------------------
+
     playCard(gameState.id, myPlayer.uid, card);
   };
 
