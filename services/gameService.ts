@@ -1,10 +1,10 @@
 
 import { db } from '../firebase';
-import { 
-  doc, 
-  setDoc, 
-  updateDoc, 
-  arrayUnion, 
+import {
+  doc,
+  setDoc,
+  updateDoc,
+  arrayUnion,
   runTransaction,
   collection,
   query,
@@ -13,7 +13,8 @@ import {
   getDocs,
   Timestamp,
   increment,
-  addDoc
+  addDoc,
+  getDoc
 } from 'firebase/firestore';
 import { GameState, Player, GameEvent, GameStatus, StarVote, MatchData, Reaction } from '../types';
 import { INITIAL_LIVES, MAX_LEVEL, MAX_PLAYERS, MAX_LIVES } from '../constants';
@@ -323,7 +324,7 @@ export const playCard = async (roomId: string, playerUid: string, card: number) 
 
     // 8. Execute Archiving OUTSIDE the main transaction to avoid "Reads after Writes"
     if (finalStateForArchive) {
-       await archiveMatchAndNotify(finalStateForArchive);
+       await archiveMatchAndNotify(finalStateForArchive, playerUid, null);
     }
 
   } catch (e) {
@@ -380,7 +381,7 @@ export const submitStarVote = async (roomId: string, voterUid: string, approved:
 
   // Execute Archiving OUTSIDE transaction
   if (finalStateForArchive) {
-    await archiveMatchAndNotify(finalStateForArchive);
+    await archiveMatchAndNotify(finalStateForArchive, voterUid, null);
   }
 };
 
@@ -483,74 +484,77 @@ export const sendReaction = async (roomId: string, emoji: string, sender: Player
  * Ensures "Reads before Writes" rule is respected by separating
  * gameplay logic (which writes game state) from stat logic (which reads users then writes stats).
  */
-const archiveMatchAndNotify = async (finalState: GameState) => {
-    const matchId = `${finalState.id}_${Date.now()}`;
-    const matchRef = doc(db, 'matches', matchId);
-    
-    // Prepare Match Data immediately
-    const matchData: MatchData = {
-        matchId: matchId,
-        playerIds: finalState.players.map(p => p.uid),
-        playerNames: finalState.players.map(p => p.name),
-        result: finalState.status === 'victory' ? 'victory' : 'game_over',
-        levelReached: finalState.level,
-        livesLeft: finalState.lives,
-        starsUsed: finalState.starsUsed || 0,
-        starsEfficiency: finalState.starsEfficiency || 0,
-        errorsMade: finalState.errorsMade || 0,
-        startTime: finalState.startTime,
-        endTime: Date.now(),
-        durationSeconds: Math.floor((Date.now() - finalState.startTime) / 1000)
+
+/**
+ * Refactored: Decouples match archiving from user stats update.
+ * Only the current user updates their own profile. Match archiving is idempotent.
+ * @param finalState The final GameState at game end
+ * @param currentUserId The UID of the currently logged-in user
+ * @param currentUserName The displayName of the current user (for new profile creation)
+ */
+export const archiveMatchAndNotify = async (
+  finalState: GameState,
+  currentUserId: string,
+  currentUserName: string | null
+) => {
+  const matchId = `${finalState.id}_${finalState.startTime}`; // Use startTime for idempotency
+  const matchRef = doc(db, 'matches', matchId);
+
+  // Prepare Match Data
+  const matchData: MatchData = {
+    matchId: matchId,
+    playerIds: finalState.players.map(p => p.uid),
+    playerNames: finalState.players.map(p => p.name),
+    result: finalState.status === 'victory' ? 'victory' : 'game_over',
+    levelReached: finalState.level,
+    livesLeft: finalState.lives,
+    starsUsed: finalState.starsUsed || 0,
+    starsEfficiency: finalState.starsEfficiency || 0,
+    errorsMade: finalState.errorsMade || 0,
+    startTime: finalState.startTime,
+    endTime: Date.now(),
+    durationSeconds: Math.floor((Date.now() - finalState.startTime) / 1000)
+  };
+
+  // 1. Archive match (idempotent: setDoc with {merge: false})
+  try {
+    await setDoc(matchRef, matchData, { merge: false });
+  } catch (e) {
+    // If already exists, ignore error
+    if ((e as any).code !== 'already-exists') {
+      console.error('Failed to archive match:', e);
+    }
+  }
+
+  // 2. Update only the current user's stats
+  if (!currentUserId) return;
+  const userRef = doc(db, 'users', currentUserId);
+  try {
+    // Korrekter Abruf des User-Snapshots im Web SDK
+    const userSnap = await getDoc(userRef);
+    let currentHighLevel = 0;
+    if (userSnap.exists()) {
+      currentHighLevel = userSnap.data().highestLevelReached || 0;
+    }
+
+    const updatePayload: any = {
+      totalGamesPlayed: increment(1)
     };
 
-    try {
-        await runTransaction(db, async (transaction) => {
-            // 1. READ PHASE: Read all user profiles first
-            const userReads = await Promise.all(
-                finalState.players.map(async (p) => {
-                    if (!p.uid) return { uid: null, doc: null };
-                    const userRef = doc(db, 'users', p.uid);
-                    const userDoc = await transaction.get(userRef);
-                    return { uid: p.uid, doc: userDoc, ref: userRef, name: p.name };
-                })
-            );
-
-            // 2. WRITE PHASE: Write match data
-            transaction.set(matchRef, matchData);
-
-            // 3. WRITE PHASE: Update all users
-            for (const { uid, doc: userDoc, ref, name } of userReads) {
-                if (!uid || !ref) continue;
-
-                if (userDoc && userDoc.exists()) {
-                    const userData = userDoc.data();
-                    const currentHighLevel = userData.highestLevelReached || 0;
-                    
-                    const updatePayload: any = {
-                        totalGamesPlayed: increment(1)
-                    };
-                    
-                    if (finalState.level > currentHighLevel) {
-                        updatePayload.highestLevelReached = finalState.level;
-                    }
-
-                    transaction.update(ref, updatePayload);
-                } else {
-                    // Create basic profile for anon/new users
-                    transaction.set(ref, {
-                        uid: uid,
-                        isAnonymous: true,
-                        displayName: name,
-                        totalGamesPlayed: 1,
-                        highestLevelReached: finalState.level
-                    });
-                }
-            }
-        });
-        console.log("Match archived successfully.");
-    } catch (e) {
-        console.error("Failed to archive match:", e);
+    // Nur updaten, wenn sich das Level auch höher ist
+    if (finalState.level > currentHighLevel) {
+      updatePayload.highestLevelReached = finalState.level;
     }
+
+    const finalUserFields: any = { ...updatePayload };
+    if (currentUserName) {
+      finalUserFields.displayName = currentUserName;
+    }
+
+    await setDoc(userRef, finalUserFields, { merge: true });
+  } catch (e) {
+    console.error('Failed to update user stats:', e);
+  }
 };
 
 export const getGlobalLeaderboard = async () => {
