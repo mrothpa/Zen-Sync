@@ -4,6 +4,7 @@ export interface Player {
   hand: number[];
   isHost: boolean;
   ready: boolean;
+  isOnline: boolean;
 }
 
 export type GameStatus = 'lobby' | 'playing' | 'level_complete' | 'game_over' | 'victory';

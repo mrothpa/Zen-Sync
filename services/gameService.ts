@@ -51,6 +51,7 @@ export const createRoom = async (user: any): Promise<string> => {
     hand: [],
     isHost: true,
     ready: false,
+    isOnline: true
   };
 
   const initialState: GameState = {
@@ -95,6 +96,7 @@ export const joinRoom = async (roomId: string, user: any) => {
       hand: [],
       isHost: false,
       ready: false,
+      isOnline: true
     };
 
     transaction.update(roomRef, {
@@ -139,6 +141,26 @@ export const toggleReady = async (roomId: string, uid: string, currentPlayers: P
     p.uid === uid ? { ...p, ready: !p.ready } : p
   );
   await updateDoc(doc(db, 'rooms', roomId), { players: updatedPlayers });
+};
+
+export const updatePresence = async (roomId: string, uid: string, isOnline: boolean) => {
+  const roomRef = doc(db, 'rooms', roomId);
+  await runTransaction(db, async (transaction) => {
+    const snapshot = await transaction.get(roomRef);
+    if (!snapshot.exists()) return;
+
+    const data = snapshot.data() as GameState;
+    const playerExists = data.players.find(p => p.uid === uid);
+    
+    // If player somehow doesn't exist (kicked?), do nothing
+    if (!playerExists) return;
+
+    const updatedPlayers = data.players.map(p => 
+      p.uid === uid ? { ...p, isOnline } : p
+    );
+
+    transaction.update(roomRef, { players: updatedPlayers });
+  });
 };
 
 export const startGame = async (roomId: string, currentPlayers: Player[]) => {

@@ -4,9 +4,11 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { GameState, Player, GameEventType } from '../types';
 import { playCard, nextLevel, resetToLobby, proposeStar, submitStarVote, leaveRoom, sendReaction } from '../services/gameService';
 import { triggerErrorVibration, triggerSuccessVibration } from '../services/haptics';
+import { setupPresence, subscribeToRoomPresence } from '../services/presence';
 import Card from './Card';
 import NinjaStarAction from './NinjaStarAction';
 import ReactionOverlay from './ReactionOverlay';
+import PauseOverlay from './PauseOverlay';
 import { COLORS } from '../constants';
 
 interface GameProps {
@@ -25,6 +27,69 @@ const Game: React.FC<GameProps> = ({ gameState, currentUser, onLeave, onOpenProf
   
   // Emoji Cooldown State
   const [emojiCooldown, setEmojiCooldown] = useState(false);
+
+  // --- Realtime Database Presence ---
+  const [onlineStatusMap, setOnlineStatusMap] = useState<Record<string, boolean>>({});
+  const [gracePeriodOver, setGracePeriodOver] = useState(false);
+
+  useEffect(() => {
+    // 1. Mark myself as online in RTDB & handle disconnect
+    const cleanupPresence = setupPresence(gameState.id, currentUser.uid);
+
+    // 2. Subscribe to everyone's RTDB status
+    const cleanupSubscription = subscribeToRoomPresence(gameState.id, (map) => {
+        setOnlineStatusMap(map);
+        console.log(`[Presence] Full Presence Map for Room ${gameState.id}:`, map);
+    });
+    
+    // 3. Grace Period (2 seconds) to allow RTDB to sync
+    const timer = setTimeout(() => {
+        console.log('[Presence] Grace period ended. Pause logic armed.');
+        setGracePeriodOver(true);
+    }, 2000);
+
+    return () => {
+        cleanupPresence();
+        cleanupSubscription();
+        clearTimeout(timer);
+    };
+  }, [gameState.id, currentUser.uid]);
+
+  // Debug Logging for Presence
+  useEffect(() => {
+     if (Object.keys(onlineStatusMap).length > 0) {
+        console.groupCollapsed(`[Presence Update] Checking ${gameState.players.length} players`);
+        gameState.players.forEach(p => {
+             const rtStatus = onlineStatusMap[p.uid];
+             console.log(`Player: ${p.name} (${p.uid}) -> RTDB: ${rtStatus} | Pauses Game: ${rtStatus === false}`);
+        });
+        console.groupEnd();
+     }
+  }, [onlineStatusMap, gameState.players]);
+
+  // Calculate Paused State
+  // Logic: 
+  // - Only CHECK if we have data for ALL players (strict sync).
+  // - If any player is missing from RTDB map, we assume syncing/loading -> No Pause.
+  // - Only pause if a user is EXPLICITLY offline (false). 
+  const allPlayersKnown = gameState.players.every(p => onlineStatusMap[p.uid] !== undefined);
+  
+  const isPaused = gameState.status === 'playing' && gracePeriodOver && allPlayersKnown && gameState.players.some(p => {
+    return onlineStatusMap[p.uid] === false; 
+  });
+
+  // Prepare players list for overlay
+  const playersWithRealtimeStatus = gameState.players.map(p => {
+     const status = onlineStatusMap[p.uid];
+     return {
+         ...p,
+         // Visuals: treat undefined as true (connecting/online) to avoid "red" flicker,
+         // or keep it strict for the UI details? 
+         // Since isPaused hides the overlay if false, this mainly affects the overlay CONTENT when visible.
+         // If overlay is visible (someone else is offline), and I am undefined, showing me as "connecting" is fine.
+         isOnline: status !== false 
+     };
+  });
 
   useEffect(() => {
     setMyPlayer(gameState.players.find(p => p.uid === currentUser.uid));
@@ -57,7 +122,7 @@ const Game: React.FC<GameProps> = ({ gameState, currentUser, onLeave, onOpenProf
     : null;
 
   const handlePlayCard = (card: number) => {
-    if (!myPlayer) return;
+    if (!myPlayer || isPaused) return;
     
     // Strict Client-Side Validation
     if (gameState.status !== 'playing' || card !== lowestCard) {
@@ -101,12 +166,14 @@ const Game: React.FC<GameProps> = ({ gameState, currentUser, onLeave, onOpenProf
 
   // --- Star / Ninja Logic ---
   const handleProposeStar = () => {
+    if (isPaused) return;
     if (gameState.stars > 0 && !gameState.starVote && !gameState.starBlocked && myPlayer) {
       proposeStar(gameState.id, myPlayer);
     }
   };
 
   const handleVote = (approved: boolean) => {
+    if (isPaused) return;
     if (myPlayer) {
       submitStarVote(gameState.id, myPlayer.uid, approved);
     }
@@ -123,7 +190,7 @@ const Game: React.FC<GameProps> = ({ gameState, currentUser, onLeave, onOpenProf
 
   // --- Emoji Logic ---
   const handleSendReaction = (emoji: string) => {
-      if (emojiCooldown || !myPlayer) return;
+      if (emojiCooldown || !myPlayer || isPaused) return;
       
       sendReaction(gameState.id, emoji, myPlayer);
       
@@ -141,6 +208,11 @@ const Game: React.FC<GameProps> = ({ gameState, currentUser, onLeave, onOpenProf
   return (
     <div className="flex flex-col h-screen w-full bg-slate-50 overflow-hidden relative transition-colors duration-500 pointer-events-none">
       
+      {/* --- Pause Overlay --- */}
+      <AnimatePresence>
+        {isPaused && <PauseOverlay players={playersWithRealtimeStatus} />}
+      </AnimatePresence>
+
       {/* --- Reaction Overlay (Visuals) --- */}
       <ReactionOverlay roomId={gameState.id} />
 
