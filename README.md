@@ -26,7 +26,7 @@ Eine moderne, webbasierte Umsetzung des preisgekrönten Kartenspiels **"The Mind
 
 1.  **Repository klonen:**
     ```bash
-    git clone [https://github.com/mrothpa/the-mind.git](https://github.com/mrothpa/the-mind.git)
+    git clone [https://github.com/mrothpa/Zen-Sync.git](https://github.com/mrothpa/Zen-Sync.git)
     cd the-mind
     ```
 
