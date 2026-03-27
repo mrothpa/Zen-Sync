@@ -1,6 +1,6 @@
-# 🃏 The Mind - Web Edition
+# 🃏 Sync-Cards - Web Edition
 
-Eine moderne, webbasierte Umsetzung des preisgekrönten Kartenspiels **"The Mind"**. Erlebe das faszinierende Experiment, bei dem Teams ohne Worte und Zeichen versuchen, Karten in der richtigen Reihenfolge abzulegen.
+Eine moderne, webbasierte Umsetzung des preisgekrönten Kartenspiels **"The Mind"**.
 
 > **Hinweis:** Dies ist ein Fan-Projekt zu Bildungszwecken. Alle Rechte am ursprünglichen Spielkonzept liegen beim NSV Verlag und Wolfgang Warsch.
 
