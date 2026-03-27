@@ -1,4 +1,4 @@
-# 🃏 Sync-Cards - Web Edition
+# 🃏 Zen-Sync (The Mind) - Web Edition
 
 Eine moderne, webbasierte Umsetzung des preisgekrönten Kartenspiels **"The Mind"**.
 
@@ -49,11 +49,11 @@ Eine moderne, webbasierte Umsetzung des preisgekrönten Kartenspiels **"The Mind
     ```bash
     npm run dev
     ```
-5. **Alternativ ohne Node.js lokal zu installieren: **
-Um das Produktions-Bundle (`dist/`) zu erstellen, ohne Node.js lokal zu installieren:
-```bash
-docker run --rm -v "$(pwd)":/app -w /app node:20-slim sh -c "npm install && npm run build"
-```
+5. **Alternativ ohne Node.js lokal zu installieren:**
+    Um das Produktions-Bundle (`dist/`) zu erstellen, ohne Node.js lokal zu installieren:
+    ```bash
+    docker run --rm -v "$(pwd)":/app -w /app node:20-slim sh -c "npm install && npm run build"
+    ```
 
 ## 📈 Spielregeln (Kurzfassung)
 
