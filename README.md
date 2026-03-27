@@ -2,6 +2,8 @@
 
 Eine moderne, webbasierte Umsetzung des preisgekrönten Kartenspiels **"The Mind"**. Erlebe das faszinierende Experiment, bei dem Teams ohne Worte und Zeichen versuchen, Karten in der richtigen Reihenfolge abzulegen.
 
+> **Hinweis:** Dies ist ein Fan-Projekt zu Bildungszwecken. Alle Rechte am ursprünglichen Spielkonzept liegen beim NSV Verlag und Wolfgang Warsch.
+
 ## ✨ Features
 
 - **Echtzeit-Multiplayer:** Synchronisiertes Gameplay über Firebase Firestore.
@@ -47,6 +49,11 @@ Eine moderne, webbasierte Umsetzung des preisgekrönten Kartenspiels **"The Mind
     ```bash
     npm run dev
     ```
+5. **Alternativ ohne Node.js lokal zu installieren: **
+Um das Produktions-Bundle (`dist/`) zu erstellen, ohne Node.js lokal zu installieren:
+```bash
+docker run --rm -v "$(pwd)":/app -w /app node:20-slim sh -c "npm install && npm run build"
+```
 
 ## 📈 Spielregeln (Kurzfassung)
 
